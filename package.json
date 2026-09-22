@@ -8,7 +8,8 @@
     "test": "npm test --workspace @yoob/avatar",
     "typecheck": "npm run typecheck --workspace @yoob/avatar",
     "demo": "npm run dev --workspace yoob-demo",
-    "token-server": "YOOB_EXAMPLE_ALLOW_ANONYMOUS=1 node examples/token-server/server.mjs"
+    "token-server": "YOOB_EXAMPLE_ALLOW_ANONYMOUS=1 node examples/token-server/server.mjs",
+    "dev-key": "node scripts/yoob-dev-key.mjs"
   },
   "engines": { "node": ">=22" }
 }
