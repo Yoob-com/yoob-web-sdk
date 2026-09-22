@@ -17,9 +17,16 @@
 //   YOOB_EXAMPLE_ALLOW_ANONYMOUS   1 lets anyone mint sessions. Local development only.
 //   YOOB_RATE_LIMIT                sessions per user per minute, across all routes (default 10)
 //   PORT                           default 3100. The server listens on 127.0.0.1 only.
+import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 
-const apiKey = process.env.YOOB_API_KEY;
+// A contributor's sandbox key from scripts/yoob-dev-key.mjs is used when YOOB_API_KEY is not set.
+const contributorKey = () => {
+  try { return fs.readFileSync(path.join(os.homedir(), ".config", "yoob", "contributor.key"), "utf8").trim(); } catch { return undefined; }
+};
+const apiKey = process.env.YOOB_API_KEY || contributorKey();
 const apiBase = process.env.YOOB_API_BASE ?? "https://api2.yoob.com";
 const port = Number(process.env.PORT ?? 3100);
 const allowAnonymous = process.env.YOOB_EXAMPLE_ALLOW_ANONYMOUS === "1";
@@ -27,7 +34,7 @@ const allowedCharacters = new Set(
   (process.env.YOOB_CHARACTERS || "luna-realistic,luna-anime").split(",").map((id) => id.trim()).filter(Boolean),
 );
 const perMinute = Math.max(1, Number(process.env.YOOB_RATE_LIMIT || 10) || 10);
-if (!apiKey) throw new Error("Set YOOB_API_KEY");
+if (!apiKey) throw new Error("Set YOOB_API_KEY, or run `npm run dev-key` if you are a Yoob-com contributor");
 if (allowedCharacters.has("*")) throw new Error("YOOB_CHARACTERS must list character ids, not *");
 
 // Each character's voice and prompt are set here, on the server: the app can't change them and never sees the prompt.

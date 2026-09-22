@@ -23,6 +23,22 @@ npm run demo        # http://localhost:5173
 
 Security: see the [package README](packages/avatar/README.md#security).
 
+## Contributing
+
+Members of the [Yoob-com](https://github.com/Yoob-com) GitHub organization get their own sandbox key, so a fresh
+clone shows the characters without anyone sharing a secret:
+
+```sh
+gh auth login          # once, with your GitHub account
+npm install
+npm run dev-key        # saves a sandbox key to ~/.config/yoob/contributor.key
+npm run token-server   # uses that key when YOOB_API_KEY is not set
+npm run demo           # http://localhost:5173 (WebGPU: desktop Chrome, Edge or Safari 26)
+```
+
+The key is a sandbox key: free 5-minute sessions, an hour a day, never billed. Running `npm run dev-key` again
+replaces it. If it says you are not a member, make your organization membership public or ask an owner to add you.
+
 ## License
 
 Apache-2.0. Character model files are licensed separately and are not in this repository.
