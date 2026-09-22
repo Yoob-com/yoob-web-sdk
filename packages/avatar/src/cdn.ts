@@ -52,7 +52,7 @@ export class YoobError extends Error {
   }
 }
 
-export const SDK_VERSION = "0.2.0";
+export const SDK_VERSION = "0.2.1";
 
 /** Public keys whose manifest signatures the SDK accepts, by key id. */
 const SIGNING_KEYS: Record<string, string> = {
