@@ -13,6 +13,7 @@
 //
 // Settings:
 //   YOOB_API_KEY                   required. A yoob_test_ key opens sandbox sessions; a yoob_live_ key bills credits.
+//   YOOB_API_BASE                  where sessions are opened (default https://la.yoob.com, the Yoob console)
 //   YOOB_CHARACTERS                characters this server hands out, comma-separated (default luna-realistic,luna-anime)
 //   YOOB_EXAMPLE_ALLOW_ANONYMOUS   1 lets anyone mint sessions. Local development only.
 //   YOOB_RATE_LIMIT                sessions per user per minute, across all routes (default 10)
@@ -27,7 +28,7 @@ const contributorKey = () => {
   try { return fs.readFileSync(path.join(os.homedir(), ".config", "yoob", "contributor.key"), "utf8").trim(); } catch { return undefined; }
 };
 const apiKey = process.env.YOOB_API_KEY || contributorKey();
-const apiBase = process.env.YOOB_API_BASE ?? "https://api2.yoob.com";
+const apiBase = process.env.YOOB_API_BASE ?? "https://la.yoob.com";
 const port = Number(process.env.PORT ?? 3100);
 const allowAnonymous = process.env.YOOB_EXAMPLE_ALLOW_ANONYMOUS === "1";
 const allowedCharacters = new Set(

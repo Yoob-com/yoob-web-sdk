@@ -29,7 +29,7 @@ session is metered to your workspace.
 const user = await requireSignedInUser(req);            // your auth
 await rateLimit(user.id);                               // your limits
 const character = ALLOWED.has(req.body.character) ? req.body.character : reject(400);
-const response = await fetch("https://api2.yoob.com/api/v1/avatar/sessions", {
+const response = await fetch("https://la.yoob.com/api/v1/avatar/sessions", {
   method: "POST",
   headers: { authorization: `Bearer ${process.env.YOOB_API_KEY}`, "content-type": "application/json" },
   body: JSON.stringify({ characters: [character] }), // one character, never "*"
@@ -113,6 +113,7 @@ Your backend asks Yoob for a voice session with your API key and returns the res
 
 ```js
 // POST /yoob-voice on your server
+// Voice sessions are still opened by api2.yoob.com; avatar sessions moved to the console.
 const response = await fetch("https://api2.yoob.com/api/v1/voice/sessions", {
   method: "POST",
   headers: { authorization: `Bearer ${process.env.YOOB_API_KEY}`, "content-type": "application/json" },
@@ -327,8 +328,8 @@ Using your own voice stack? Call `mic.start()` and read `mic.on("audio", pcm => 
 |---|---|---|
 | `cdn.yoob.com` character files | First visit and version updates | Download grant |
 | `cdn.yoob.com` ONNX Runtime WebAssembly | First visit | Nothing |
-| `api2.yoob.com/api/v1/sessions/heartbeat` | Every 15 s from the start of `prepare()` | Session token |
-| `api2.yoob.com/api/v1/sessions/end` | `destroy()` or page close | Session token |
+| `la.yoob.com/api/v1/sessions/heartbeat` | Every 15 s from the start of `prepare()` | Session token |
+| `la.yoob.com/api/v1/sessions/end` | `destroy()` or page close | Session token |
 | `wss://voice.yoob.com/v1/realtime` | Yoob voice conversations | Voice token, microphone audio, typed text |
 
 With Yoob voice, microphone audio goes from the browser to `voice.yoob.com`, which relays it to OpenAI and meters the
@@ -366,7 +367,7 @@ minutes. With your own OpenAI account, it goes directly from the browser to Open
 
 ## Content Security Policy
 
-Allow `connect-src https://cdn.yoob.com https://api2.yoob.com` (plus `wss://voice.yoob.com` for Yoob voice,
+Allow `connect-src https://cdn.yoob.com https://la.yoob.com` (plus `wss://voice.yoob.com` for Yoob voice,
 `wss://api.openai.com` or `wss://generativelanguage.googleapis.com` for your own provider, or your LiveKit server for
 LiveKit agents),
 `script-src 'self' 'wasm-unsafe-eval'`, `worker-src 'self'`, and `img-src blob:` plus `media-src blob:` (the poster

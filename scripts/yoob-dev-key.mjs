@@ -12,7 +12,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const api = process.env.YOOB_API_BASE ?? "https://api2.yoob.com";
+// Contributor keys are still issued by api2, not the console: /api/v1/dev/contributor-key has not moved, and the key
+// it mints lives in api2's database. A key from here therefore will not open a session against the console.
+const api = process.env.YOOB_DEV_KEY_API_BASE ?? "https://api2.yoob.com";
 const out = path.join(os.homedir(), ".config", "yoob", "contributor.key");
 let token = process.env.GITHUB_TOKEN;
 if (!token) {

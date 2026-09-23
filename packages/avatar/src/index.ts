@@ -34,6 +34,7 @@ export interface YoobCredentials {
   /** Short-lived grant for this session's characters. Heartbeats may renew it. */
   download_token: string;
   heartbeat_seconds?: number;
+  /** Where heartbeats go. Pass the session response through unchanged and this is set for you. */
   api_base?: string;
   cdn_base?: string;
 }
@@ -84,6 +85,15 @@ export interface YoobSupport {
   supported: boolean;
   reason?: string;
 }
+
+/**
+ * Where heartbeats go when the backend's credentials do not say.
+ *
+ * Metering moved from api2.yoob.com to the Yoob console, which returns its own `api_base` on every session — so a
+ * backend that passes the whole response through never uses this, and pointing a deployment somewhere else needs no
+ * SDK change. It only matters for a backend that drops the field.
+ */
+const DEFAULT_API_BASE = "https://la.yoob.com";
 
 const ORT_WASM_PATH = "v1/runtime/onnxruntime-web-1.27.0/ort-wasm-simd-threaded.asyncify.wasm";
 const SAMPLE_RATE = 24_000;
@@ -406,7 +416,7 @@ export class YoobAvatar {
   }
 
   private apiBaseOf(credentials?: YoobCredentials): string {
-    return (credentials?.api_base ?? "https://api2.yoob.com").replace(/\/+$/, "");
+    return (credentials?.api_base ?? DEFAULT_API_BASE).replace(/\/+$/, "");
   }
 
   /** The API ended the session (it was idle too long): open a new one through the app's backend. */

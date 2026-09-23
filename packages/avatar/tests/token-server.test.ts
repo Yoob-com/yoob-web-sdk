@@ -89,3 +89,11 @@ test("token server refuses a wildcard character list", async () => {
   const code = await new Promise((resolve) => child.on("exit", resolve));
   assert.notEqual(code, 0);
 });
+
+// Metering moved to the Yoob console, so an example run without YOOB_API_BASE must reach the console and not api2 —
+// the two have separate balances, and a stale default would bill the wrong one.
+test("the example opens sessions against the console by default", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(SERVER, "utf8"));
+  assert.match(source, /YOOB_API_BASE \?\? "https:\/\/la\.yoob\.com"/);
+  assert.doesNotMatch(source, /\?\? "https:\/\/api2\.yoob\.com"/);
+});
