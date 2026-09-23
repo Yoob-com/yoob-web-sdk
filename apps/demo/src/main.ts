@@ -47,12 +47,15 @@ if (!support.supported) {
   (window as unknown as { yoob: YoobAvatar }).yoob = avatar;
 
   const conversation = new YoobConversation(avatar, {
-    // Your backend asks Yoob for a voice session, and sets Luna's voice and prompt there.
-    // With your own OpenAI account instead (start the token server with OPENAI_API_KEY):
-    // getClientSecret: async () => (await post<{ value: string }>("/openai-secret", {})).value,
-    getVoiceSession: () => fetch("/yoob-voice", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ character: "luna-anime" }),
-    }).then((r) => r.json()),
+    // Your own OpenAI account: the backend mints a short-lived client secret and
+    // the browser talks to OpenAI directly. Avatar minutes are still metered by
+    // the console; voice minutes are billed by OpenAI to that account.
+    getClientSecret: async () => (await post<{ value: string }>("/openai-secret", {})).value,
+    // Yoob's bundled voice instead, through the relay, with the voice and prompt
+    // pinned on your backend:
+    // getVoiceSession: () => fetch("/yoob-voice", {
+    //   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ character: "luna-anime" }),
+    // }).then((r) => r.json()),
     greet: true,
     onState: (state) => {
       talk.textContent = state === "idle" || state === "ended" ? "Talk to Luna" : "End";

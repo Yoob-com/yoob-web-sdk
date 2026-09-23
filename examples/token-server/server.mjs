@@ -14,6 +14,7 @@
 // Settings:
 //   YOOB_API_KEY                   required. A yoob_test_ key opens sandbox sessions; a yoob_live_ key bills credits.
 //   YOOB_API_BASE                  where sessions are opened (default https://la.yoob.com, the Yoob console)
+//   OPENAI_REALTIME_MODEL          speech-to-speech model for /openai-secret (default gpt-realtime)
 //   YOOB_CHARACTERS                characters this server hands out, comma-separated (default luna-realistic,luna-anime)
 //   YOOB_EXAMPLE_ALLOW_ANONYMOUS   1 lets anyone mint sessions. Local development only.
 //   YOOB_RATE_LIMIT                sessions per user per minute, across all routes (default 10)
@@ -29,6 +30,8 @@ const contributorKey = () => {
 };
 const apiKey = process.env.YOOB_API_KEY || contributorKey();
 const apiBase = process.env.YOOB_API_BASE ?? "https://la.yoob.com";
+// OpenAI's speech-to-speech model, for the /openai-secret route only.
+const realtimeModel = process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime";
 const port = Number(process.env.PORT ?? 3100);
 const allowAnonymous = process.env.YOOB_EXAMPLE_ALLOW_ANONYMOUS === "1";
 const allowedCharacters = new Set(
@@ -136,7 +139,7 @@ const routes = {
     return forward(res, await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
-      body: JSON.stringify({ session: { type: "realtime", model: "gpt-realtime" } }),
+      body: JSON.stringify({ session: { type: "realtime", model: realtimeModel } }),
     }));
   },
 };
