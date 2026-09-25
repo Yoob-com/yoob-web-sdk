@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": { "dev": "vite --port 5173", "build": "vite build" },
-  "dependencies": { "@yoob/avatar": "0.2.1" },
+  "dependencies": { "@yoob/avatar": "0.3.0" },
   "devDependencies": { "vite": "8.1.5" }
 }

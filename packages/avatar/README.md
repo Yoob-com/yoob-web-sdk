@@ -62,6 +62,10 @@ await avatar.prepare();
 
 The character fills its container (`fit: "contain"` letterboxes instead).
 
+The character draws 25 lip frames a second, and by default each one cross-fades into the next at your display's
+refresh rate, timed so the lips still meet the audio. The mouth also fades back to the idle face when a reply ends or
+is interrupted. `lipCadence: "step"` shows whole lip frames instead, as 0.2 did.
+
 If the session can't continue, the character stops rendering, the phase becomes `stopped`, and `onSessionEnded` and
 `onError` receive a `YoobError`: `out-of-credit` when the workspace has no credit left, `unauthorized` when Yoob
 refuses the session or its API key was revoked, or `session-ended` when a sandbox session reaches its time limit, when

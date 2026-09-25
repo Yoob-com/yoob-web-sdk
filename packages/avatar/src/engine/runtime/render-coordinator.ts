@@ -10,6 +10,16 @@ import type { NeuralMouthRenderStride } from "./render-cadence";
 import type { RendererTemporalContract } from "./renderer-temporal";
 import { StreamingRenderCreditQueue } from "./live-render-pressure";
 import {
+  hostFramesAdjacent,
+  lipFramesAdjacent,
+  resolveLipCadence,
+  type LipCadence,
+  type LipFadeCounts,
+  type LipFadeKind,
+  type Rect,
+} from "./lip-fade";
+import { LipFadeLayer } from "./lip-fade-layer";
+import {
   StreamingPcmChunker,
   streamingBootstrapFrameCount,
 } from "./stream-chunker";
@@ -437,6 +447,11 @@ export interface RenderCoordinatorCallbacks {
   onRuntimePressure?: (trace: LiveCallPressureTrace) => void;
 }
 
+export interface RenderPresentationOptions {
+  /** How lip frames reach the screen; see lip-fade.ts. Default `blend`. */
+  lipCadence?: LipCadence;
+}
+
 export interface LiveCallPressureTrace extends RuntimePressureTrace {
   pendingRenderWindows: number;
   inFlightRenderWindows: number;
@@ -517,17 +532,27 @@ export class RenderCoordinator {
   private mouthImageData?: ImageData;
   private mouthImageWidth = 0;
   private mouthImageHeight = 0;
+  readonly lipCadence: LipCadence;
+  /** The cross-fade between lip frames (`blend`); undefined draws exactly as 0.2 did (`step`). */
+  private readonly lipFade?: LipFadeLayer;
+  /** The lip frame on screen (blend bookkeeping), its mouth box and its host frame; -1 when the idle face shows. */
+  private shownMouthFrame = -1;
+  private shownMouthBox?: Rect;
+  private shownHostFrame = -1;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly idleVideo: HTMLVideoElement,
     private readonly callbacks: RenderCoordinatorCallbacks = {},
+    presentation: RenderPresentationOptions = {},
   ) {
     const context = canvas.getContext("2d", {
       alpha: false, desynchronized: true, willReadFrequently: true,
     });
     if (!context) throw new Error("Canvas2D is unavailable");
     this.context = context;
+    this.lipCadence = resolveLipCadence(presentation.lipCadence);
+    if (this.lipCadence === "blend") this.lipFade = new LipFadeLayer(context);
     this.worker.onmessage = (event: MessageEvent<WorkerToMain>) => void this.handleWorker(event.data);
     this.worker.onerror = (event) => {
       const error = new Error(`pipeline worker: ${event.message}`);
@@ -560,6 +585,7 @@ export class RenderCoordinator {
       // Draw the terminal frame once, then release the mouth overlay and let
       // the neutral host resume. This also prevents post-turn seek thrash.
       this.draw();
+      this.settleMouth();
       this.audioStarted = false;
       this.audioStarting = false;
       this.audioPausedForRender = false;
@@ -844,6 +870,7 @@ export class RenderCoordinator {
   cancel(resetHost = true): number {
     const epoch = ++this.epoch;
     this.activeEpoch = epoch;
+    this.settleMouth();
     this.post({ type: "cancel", epoch });
     this.audio.clear(epoch);
     // Pause to drop the in-flight frame, then let the loop run again — a
@@ -1191,6 +1218,7 @@ export class RenderCoordinator {
   }
 
   private draw(): void {
+    const now = performance.now();
     const { width, height } = this.canvas;
     const audioFrameIndex = this.audioStarted
       ? Math.min(this.frameCount - 1, Math.floor(this.playedSamples / SAMPLES_PER_FRAME))
@@ -1218,6 +1246,7 @@ export class RenderCoordinator {
             );
           }
         }
+        this.lipFade?.refresh(now, false);
         return;
       }
       this.hostSyncMisses = 0;
@@ -1236,7 +1265,10 @@ export class RenderCoordinator {
       // mouth is never shaped for audio that has not played yet.
       if (!this.frames.has(synchronized)) {
         const substitute = this.nearestHeldFrameAtOrBefore(synchronized);
-        if (substitute === undefined) return;
+        if (substitute === undefined) {
+          this.lipFade?.refresh(now, false);
+          return;
+        }
         if (!this.frameSubstitutionLogged) {
           this.frameSubstitutionLogged = true;
           this.callbacks.onStatus?.(
@@ -1248,7 +1280,28 @@ export class RenderCoordinator {
       } else {
         frameIndex = synchronized;
       }
-      if (frameIndex === this.lastCompositedAudioFrame) return;
+      if (frameIndex === this.lastCompositedAudioFrame) {
+        this.lipFade?.refresh(now, false);
+        return;
+      }
+    }
+    // Blend: choose how the new lip frame replaces the picture on screen, and keep that picture before painting.
+    let fadeKind: LipFadeKind | undefined;
+    const presentedHost = !this.lipFade ? -1 : this.presentedHostFrame >= 0
+      ? this.presentedHostFrame
+      : Math.floor(this.idleVideo.currentTime * FPS + 1e-4) % this.nIdle;
+    if (this.lipFade && frameIndex >= 0) {
+      const incoming = this.frames.get(frameIndex);
+      if (incoming) {
+        if (this.shownMouthFrame < 0) {
+          fadeKind = "enter";
+        } else if (lipFramesAdjacent(this.shownMouthFrame, frameIndex)
+            && hostFramesAdjacent(this.shownHostFrame, presentedHost, this.nIdle)) {
+          fadeKind = "neighbour";
+        }
+        if (fadeKind) this.lipFade.capture(this.shownMouthBox, incoming.box);
+        else this.lipFade.step();
+      }
     }
     // No mouth is composited before audio starts. The old preview path painted
     // `renderedPrefix - 1`, walking the mouth through every frame produced
@@ -1259,18 +1312,23 @@ export class RenderCoordinator {
     // until `audioStarted`, and the pcm→first-mouth timing is recorded by
     // LatencyTrace rather than by painting.
 
+    let paintedHost = false;
     if (this.idleVideo.readyState >= HAVE_CURRENT_DATA
         && (this.audioStarted || this.renderedPrefix > 0
           || !this.hasDrawnHostFrame || this.hostFrameDirty)) {
       this.context.drawImage(this.idleVideo, 0, 0, width, height);
       this.hasDrawnHostFrame = true;
       this.hostFrameDirty = false;
+      paintedHost = true;
       this.noteFirstHostFrame();
     } else if (!this.hasDrawnHostFrame) {
       this.context.fillStyle = "#14121c";
       this.context.fillRect(0, 0, width, height);
     }
-    if (frameIndex < 0) return;
+    if (frameIndex < 0) {
+      this.lipFade?.refresh(now, paintedHost);
+      return;
+    }
     const frame = this.frames.get(frameIndex);
     if (frame) {
       const [x0, y0, x1, y1] = frame.box;
@@ -1283,6 +1341,7 @@ export class RenderCoordinator {
           // 4.41 + putImageData 0.02) with 0.007 ms. Rounding differs from the
           // CPU path's roundToEven by at most 1 LSB per channel.
           this.context.drawImage(frame.bitmap, x0, y0);
+          this.noteMouthShown(frame, presentedHost, fadeKind, now);
           this.lastRenderedFrame = frame.index;
           this.lastCompositedAudioFrame = frame.index;
           if (!this.latency.has("first_presented_frame")) {
@@ -1309,6 +1368,7 @@ export class RenderCoordinator {
           frame.jawProtected,
         );
         this.context.putImageData(region, x0, y0);
+        this.noteMouthShown(frame, presentedHost, fadeKind, now);
       }
       this.lastRenderedFrame = frame.index;
       this.lastCompositedAudioFrame = frame.index;
@@ -1321,6 +1381,39 @@ export class RenderCoordinator {
       }
       this.evictFramesBefore(frame.index - 1);
     }
+  }
+
+  /** Blend bookkeeping after a lip frame is painted: start its fade over the picture captured before painting. */
+  private noteMouthShown(
+    frame: RenderedFrame,
+    presentedHost: number,
+    fadeKind: LipFadeKind | undefined,
+    now: number,
+  ): void {
+    if (!this.lipFade) return;
+    if (fadeKind) this.lipFade.begin(fadeKind, now);
+    this.shownMouthFrame = frame.index;
+    this.shownMouthBox = [frame.box[0], frame.box[1], frame.box[2], frame.box[3]];
+    this.shownHostFrame = presentedHost;
+  }
+
+  /**
+   * Blend: the mouth overlay leaves (a reply ended or was interrupted). Its last picture fades out over the idle face
+   * from the next host repaint on, instead of vanishing in one picture.
+   */
+  private settleMouth(): void {
+    if (!this.lipFade || this.shownMouthFrame < 0 || !this.shownMouthBox) return;
+    this.lipFade.capture(this.shownMouthBox, this.shownMouthBox);
+    this.lipFade.begin("settle", performance.now(), false);
+    this.shownMouthFrame = -1;
+    this.shownMouthBox = undefined;
+    this.shownHostFrame = -1;
+    this.hostFrameDirty = true;
+  }
+
+  /** Fades drawn so far (blend), for diagnostics. */
+  get lipFadeCounts(): LipFadeCounts | undefined {
+    return this.lipFade ? { ...this.lipFade.state.counts } : undefined;
   }
 
   /**
