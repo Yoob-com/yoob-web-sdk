@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0
+
+Smoother lips, from the Luna app's avatar work of 2026-09-24/25. No API break; the new option defaults to the app's
+behaviour.
+
+- **Lip frames cross-fade at the display's rate.** The character draws 25 lip frames a second. They used to be shown
+  whole, so on a 60 or 120 Hz screen the mouth moved in 40 ms steps. Each new lip frame now fades in over the one
+  before across 40 ms, redrawn at every display refresh. The fade reaches half weight when the frame's audio is due,
+  so lip-sync is unchanged. More than one skipped lip frame, or a jump in the idle footage, still steps.
+- **No jump at the end of a reply.** When a reply ends or is interrupted, the mouth now fades back to the idle face
+  over 160 ms instead of vanishing in one picture, and the first mouth of a reply fades in over 120 ms centred on its
+  audio.
+- **New option `lipCadence`**: `"blend"` (default) as above, or `"step"` for the 0.2 drawing, pixel for pixel.
+- Cost: only the mouth region is redrawn between lip frames (two region-sized canvas copies per refresh), about
+  0.05 ms of main-thread time per display refresh (headless Chrome on a Mac).
+
+## 0.2.1
+
+- The voice resumes after an underrun only once 160 ms of audio is queued (120 ms for a reply's last syllables),
+  instead of on each packet, so a jittery connection no longer plays as a string of short bursts.
+
 ## 0.2.0
 
 Security hardening. Needs the Yoob API that ships with it (heartbeats with renewed grants).
