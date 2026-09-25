@@ -58,6 +58,13 @@ export interface YoobAvatarOptions {
   getCredentials: () => Promise<YoobCredentials>;
   /** `"cover"` (default) fills the container; `"contain"` letterboxes. */
   fit?: "cover" | "contain";
+  /**
+   * How the lips move between the character's 25 lip frames a second. `"blend"` (default) cross-fades each new lip
+   * frame in over 40 ms at the display's own rate, fades the mouth in over 120 ms when a reply starts and back to the
+   * idle face over 160 ms when it ends or is interrupted. `"step"` shows each lip frame whole and removes the mouth in
+   * one picture, as 0.2 did.
+   */
+  lipCadence?: "blend" | "step";
   onPhase?: (phase: YoobPhase) => void;
   onProgress?: (progress: YoobProgress) => void;
   onError?: (error: YoobError) => void;
@@ -279,7 +286,7 @@ export class YoobAvatar {
       onPlaybackEnded: () => this.finishUtterance(),
       onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
       onRuntimeEvent: (event) => this.runtimeEvent?.(event),
-    });
+    }, { lipCadence: this.options.lipCadence });
     return this.coordinator;
   }
 
