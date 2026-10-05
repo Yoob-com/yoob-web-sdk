@@ -29,9 +29,12 @@ function fakeAvatar() {
   const listeners: Array<(pcm: Int16Array) => void> = [];
   let heard = 0;
   let micStart: () => Promise<void> = async () => undefined;
+  let meter: () => Promise<void> = async () => undefined;
   const avatar = {
     prepare: async () => undefined,
     unlockAudio: async () => undefined,
+    startMetering: async () => { calls.push("meter-start"); await meter(); },
+    endSession: async () => { calls.push("meter-end"); },
     speak: (pcm: Int16Array) => { calls.push(`speak:${pcm.length}`); heard = 1234; },
     endSpeech: () => calls.push("end"),
     interrupt: () => { calls.push("interrupt"); const h = heard; heard = 0; return h; },
@@ -46,6 +49,7 @@ function fakeAvatar() {
     calls,
     mic: (pcm: Int16Array) => listeners.forEach((l) => l(pcm)),
     onMicStart: (fn: () => Promise<void>) => { micStart = fn; },
+    onMeterStart: (fn: () => Promise<void>) => { meter = fn; },
   };
 }
 
@@ -294,4 +298,34 @@ test("matches voice hosts exactly or by subdomain", () => {
   assert.ok(isAllowedVoiceUrl("wss://relay.example.com/", ["*.example.com"]));
   assert.ok(!isAllowedVoiceUrl("wss://relay.example.com/", ["example.com"]));
   assert.ok(!isAllowedVoiceUrl("wss://relay.example.com/", ["*."]));
+});
+
+test("the meter starts once the microphone is live, not before", async () => {
+  const { avatar, calls } = fakeAvatar();
+  const convo = new YoobConversation(avatar, { getVoiceSession: voiceSession() });
+  await convo.start();
+  // Nothing is billed for connecting or for the permission prompt: the meter starts after the mic does.
+  assert.ok(calls.indexOf("meter-start") > calls.indexOf("mic-start"));
+  assert.equal(convo.state, "listening");
+});
+
+test("a workspace with no credit never reaches listening", async () => {
+  const { avatar, calls, onMeterStart } = fakeAvatar();
+  const errors: YoobError[] = [];
+  const states: string[] = [];
+  onMeterStart(async () => { throw new YoobError("out-of-credit", "This Yoob workspace is out of credit."); });
+  const convo = new YoobConversation(avatar, { getVoiceSession: voiceSession(), onError: (e) => errors.push(e), onState: (s) => states.push(s) });
+  await assert.rejects(convo.start(), (error: YoobError) => error.code === "out-of-credit");
+  assert.equal(errors.length, 1);
+  assert.ok(!states.includes("listening"));
+  assert.ok(calls.includes("mic-stop"));
+});
+
+test("stop() ends the metered session so nothing accrues afterwards", async () => {
+  const { avatar, calls } = fakeAvatar();
+  const convo = new YoobConversation(avatar, { getVoiceSession: voiceSession() });
+  await convo.start();
+  convo.stop();
+  assert.ok(calls.includes("meter-end"));
+  assert.equal(convo.state, "ended");
 });

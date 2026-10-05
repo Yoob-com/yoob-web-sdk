@@ -8,7 +8,7 @@ import type { RendererSpatialContract } from "./engine/runtime/generated/runtime
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
 
 import { YoobMicrophone } from "./microphone";
-import { SessionMonitor, endSession } from "./session";
+import { SessionMonitor, endSession as endSessionOnApi, startSession } from "./session";
 
 export { YoobError, type CharacterManifest };
 export { YoobMicrophone, type MicrophoneOption, type MicrophoneState, type MicrophoneEvents } from "./microphone";
@@ -70,6 +70,12 @@ export interface YoobAvatarOptions {
    */
   onSessionEnded?: (error: YoobError) => void;
   /**
+   * The meter started: the user began talking and this session is now being billed. `info.maxSeconds` is how long a
+   * free session may run, when the API caps it. Everything before this — opening the session, downloading the
+   * character, warming the renderer — costs nothing, so this is the moment a usage clock should start.
+   */
+  onSessionStarted?: (info: YoobSessionStart) => void;
+  /**
    * How long the character keeps rendering while heartbeats get no answer (network errors, timeouts, 408, 429, 5xx),
    * counted from the last successful heartbeat. 0 stops at the first failure; the most is 1800. Default 600 (10 min).
    * Refusals (401, 402, 403) stop the character at once regardless.
@@ -79,6 +85,16 @@ export interface YoobAvatarOptions {
   onHeartbeatDegraded?: (detail: string) => void;
   /** A heartbeat succeeded again after `onHeartbeatDegraded`. */
   onHeartbeatRecovered?: () => void;
+}
+
+export interface YoobSessionStart {
+  /** Unix seconds the meter started, as the API recorded it. */
+  meteredFrom?: number;
+  /** How long this session may run before the API stops it, when it is capped (free and sandbox sessions). */
+  maxSeconds?: number;
+  sandbox?: boolean;
+  balanceUsd?: number;
+  balanceLow?: boolean;
 }
 
 export interface YoobSupport {
@@ -120,6 +136,7 @@ export class YoobAvatar {
   private ended = false;
   private destroyed = false;
   private stoppedError?: YoobError;
+  private metering?: Promise<void>;
   private stopListeners: Array<(error: YoobError) => void> = [];
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
   /** The user's microphone: device choice, mute, level and audio packets. */
@@ -181,7 +198,13 @@ export class YoobAvatar {
    * loop soon after; the models finish behind it. Safe to call again after a failure.
    */
   prepare(): Promise<void> {
-    if (this.phaseValue === "ready" || this.phaseValue === "speaking") return Promise.resolve();
+    if (this.phaseValue === "ready" || this.phaseValue === "speaking") {
+      // Already on screen. If its session was ended (the last conversation stopped), open a new one rather than
+      // download and warm a character that is sitting right there.
+      if (this.credentials) return Promise.resolve();
+      this.preparing ??= this.reopenSession().finally(() => { this.preparing = undefined; });
+      return this.preparing;
+    }
     this.preparing ??= this.load().catch((error: unknown) => {
       if (this.phaseValue === "stopped" && this.stoppedError) throw this.stoppedError; // already reported
       const failure = toYoobError(error);
@@ -200,6 +223,43 @@ export class YoobAvatar {
    */
   async unlockAudio(): Promise<void> {
     await this.engine().audio.activatePlayback();
+  }
+
+  /**
+   * Starts the meter: call it when the user begins talking with the character.
+   *
+   * `prepare()` opens a session so the character can be downloaded, but a download is not a conversation, and nothing
+   * is billed until this is called. `YoobConversation` calls it for you when the microphone goes live, and `speak()`
+   * calls it on the first utterance, so an app only calls it itself when it drives the avatar some other way.
+   *
+   * Idempotent: later calls return the same promise and never restart the clock. It rejects if Yoob won't start the
+   * session — no credit, a revoked key, a used-up free allowance — and the conversation should not go ahead.
+   */
+  startMetering(): Promise<void> {
+    if (this.metering) return this.metering;
+    const credentials = this.credentials;
+    if (!credentials) {
+      return Promise.reject(new YoobError("session-ended", "There is no Yoob session to meter. Call prepare() first."));
+    }
+    const pending: Promise<void> = startSession(this.apiBaseOf(credentials), credentials.session_token)
+      .then((reply) => {
+        // Destroyed, or a new session replaced this one, while the request was in flight.
+        if (this.destroyed || this.credentials !== credentials) return;
+        this.options.onSessionStarted?.({
+          meteredFrom: reply.metered_from,
+          maxSeconds: reply.max_session_seconds,
+          sandbox: reply.sandbox,
+          balanceUsd: reply.balance_usd,
+          balanceLow: reply.balance_low,
+        });
+      })
+      .catch((error: unknown) => {
+        // Nothing is being billed, so this may be retried once whatever refused it is resolved.
+        if (this.metering === pending) this.metering = undefined;
+        throw toYoobError(error);
+      });
+    this.metering = pending;
+    return pending;
   }
 
   /**
@@ -245,6 +305,30 @@ export class YoobAvatar {
     return () => audio.stopRemoteTap(cleanup);
   }
 
+  /**
+   * Ends the metered session and stops the clock, leaving the character on screen. `YoobConversation.stop()` calls
+   * this, so an app only calls it itself when it drives the avatar some other way.
+   *
+   * `prepare()` opens a new session afterwards without downloading the character again.
+   */
+  async endSession(): Promise<void> {
+    const credentials = this.credentials;
+    this.stopHeartbeat();
+    this.credentials = undefined;
+    this.metering = undefined;
+    if (credentials) await endSessionOnApi(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
+  }
+
+  /** A new session for a character that is already downloaded and rendering. */
+  private async reopenSession(): Promise<void> {
+    const next = checkCredentials(await this.options.getCredentials());
+    if (this.destroyed) return;
+    this.credentials = next;
+    this.metering = undefined;
+    this.useGrant(next.download_token);
+    this.startHeartbeat();
+  }
+
   /** Ends the metered session and removes the character from the page. Downloaded files stay cached. */
   async destroy(): Promise<void> {
     if (this.destroyed) return;
@@ -257,7 +341,8 @@ export class YoobAvatar {
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.root.remove();
     this.credentials = undefined;
-    if (credentials) await endSession(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
+    this.metering = undefined;
+    if (credentials) await endSessionOnApi(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
     this.setPhase("not-prepared");
   }
 
@@ -266,6 +351,9 @@ export class YoobAvatar {
   }
 
   private beginUtterance(): void {
+    // An app driving the avatar directly (LiveKit, a custom voice stack) never calls startMetering(), so the first
+    // sound the character makes starts it. Fire and forget: a refusal arrives through the heartbeat as well.
+    void this.startMetering().catch(() => undefined);
     this.utterance += 1;
     this.speaking = true;
     this.ended = false;
@@ -300,10 +388,12 @@ export class YoobAvatar {
     this.setPhase("downloading");
     this.stopHeartbeat();
     this.endCurrentSession();
+    this.metering = undefined;
     this.credentials = checkCredentials(await this.options.getCredentials());
     const access = { cdnBase: this.cdnBase, downloadToken: this.credentials.download_token };
     this.access = access;
-    // Metering starts with the session, so heartbeats run during the download too.
+    // Heartbeats run from here so the session stays alive and its download grant keeps being renewed. They cost
+    // nothing until startMetering() — the download is not what the caller is buying.
     this.startHeartbeat();
     const manifest = await fetchManifest(access, this.options.character, this.options.version, "web");
     this.manifestValue = manifest;
@@ -408,7 +498,7 @@ export class YoobAvatar {
   private readonly onPageHide = () => {
     if (!this.credentials) return;
     // Best effort: keepalive lets the final beat outlive the page.
-    void endSession(this.apiBase, this.credentials.session_token, true).catch(() => undefined);
+    void endSessionOnApi(this.apiBase, this.credentials.session_token, true).catch(() => undefined);
   };
 
   private get apiBase(): string {
@@ -421,10 +511,15 @@ export class YoobAvatar {
 
   /** The API ended the session (it was idle too long): open a new one through the app's backend. */
   private async renewSession(): Promise<void> {
+    const wasMetered = this.metering !== undefined;
     const next = checkCredentials(await this.options.getCredentials());
     if (this.destroyed) return;
     this.credentials = next;
+    this.metering = undefined;
     this.useGrant(next.download_token);
+    // The replacement session opens unmetered like any other. If the one it replaced was being billed the user is
+    // still talking, so start its meter rather than hand them free minutes for a renewal they never asked for.
+    if (wasMetered) await this.startMetering();
   }
 
   private useGrant(grant: string): void {
@@ -447,7 +542,8 @@ export class YoobAvatar {
   private endCurrentSession(): void {
     const credentials = this.credentials;
     this.credentials = undefined;
-    if (credentials) void endSession(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
+    this.metering = undefined;
+    if (credentials) void endSessionOnApi(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
   }
 
   /** Heartbeats say the session is over: stop rendering and tell the app. */

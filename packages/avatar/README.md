@@ -24,6 +24,8 @@ npm install @yoob/avatar
 Keep your Yoob API key on the server and hand the page a short-lived session. Check who is asking first: every
 session is metered to your workspace.
 
+See [What is billed](#what-is-billed) for when a session starts costing money — it is not when you open it.
+
 ```js
 // POST /yoob-session on your server
 const user = await requireSignedInUser(req);            // your auth
@@ -322,6 +324,40 @@ Using your own voice stack? Call `mic.start()` and read `mic.on("audio", pcm => 
 
 `luna-realistic` is available in the [iOS SDK](https://github.com/Yoob-com/yoob-ios-sdk). Its web renderer is on the way.
 
+## What is billed
+
+A session is billed for the time the user spends talking to the character, and for nothing else.
+
+Opening a session and calling `prepare()` costs nothing, however long they take: a session exists so the character can
+be downloaded, and on a cold cache that download is tens of seconds that nobody asked to pay for. The meter starts when
+`YoobConversation.start()` brings the microphone up, and stops when `stop()`, `destroy()` or closing the page ends the
+session. Heartbeats run the whole time, but the ones before the meter starts only keep the session alive and renew its
+download grant.
+
+```js
+avatar.prepare();            // downloads and warms the character — free, and as early as you like
+await conversation.start();  // microphone live: the meter starts here
+conversation.stop();         // the meter stops and the session ends
+```
+
+That means `prepare()` can run as soon as the page loads, so the character is ready the moment someone presses Talk,
+without buying the wait.
+
+`onSessionStarted` is the moment billing begins — the place to start a usage clock. It reports `maxSeconds` when the
+API caps the session, as it does for free and sandbox ones.
+
+```js
+const avatar = new YoobAvatar({
+  // …
+  onSessionStarted: ({ maxSeconds }) => startClock(maxSeconds),
+  onSessionEnded: (error) => stopClock(error.message),
+});
+```
+
+Driving the avatar yourself, without `YoobConversation`? The first `speak()` starts the meter, or call
+`avatar.startMetering()` at whatever moment counts as the start in your app. It is idempotent, and it rejects — before
+the conversation goes ahead — if the workspace has no credit, the key was revoked, or a free allowance is used up.
+
 ## Network
 
 | Request | When | Contents |
@@ -329,7 +365,8 @@ Using your own voice stack? Call `mic.start()` and read `mic.on("audio", pcm => 
 | `cdn.yoob.com` character files | First visit and version updates | Download grant |
 | `cdn.yoob.com` ONNX Runtime WebAssembly | First visit | Nothing |
 | `la.yoob.com/api/v1/sessions/heartbeat` | Every 15 s from the start of `prepare()` | Session token |
-| `la.yoob.com/api/v1/sessions/end` | `destroy()` or page close | Session token |
+| `la.yoob.com/api/v1/sessions/start` | The user starts talking | Session token |
+| `la.yoob.com/api/v1/sessions/end` | `conversation.stop()`, `destroy()` or page close | Session token |
 | `wss://voice.yoob.com/v1/realtime` | Yoob voice conversations | Voice token, microphone audio, typed text |
 
 With Yoob voice, microphone audio goes from the browser to `voice.yoob.com`, which relays it to OpenAI and meters the

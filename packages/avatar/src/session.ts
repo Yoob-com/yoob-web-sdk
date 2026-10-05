@@ -278,6 +278,51 @@ async function classify(response: Response): Promise<Outcome> {
   }
 }
 
+/** What `POST /api/v1/sessions/start` returns. */
+export interface StartReply {
+  metered_from?: number;
+  max_session_seconds?: number;
+  sandbox?: boolean;
+  balance_usd?: number;
+  balance_low?: boolean;
+}
+
+/**
+ * Starts the meter on an open session: the moment the user begins talking.
+ *
+ * Opening a session only buys the right to download a character; this is what
+ * starts the clock. It is idempotent, so a retry can't restart it, and a
+ * refusal here (no credit, a revoked key, a used-up sandbox allowance) means
+ * the conversation must not go ahead.
+ */
+export async function startSession(apiBase: string, token: string): Promise<StartReply> {
+  const response = await fetch(`${apiBase.replace(/\/+$/, "")}/api/v1/sessions/start`, {
+    method: "POST",
+    credentials: "omit",
+    headers: { authorization: `Bearer ${token}`, "x-yoob-sdk": `yoob-web/${SDK_VERSION}` },
+  });
+  const body = await response.json().catch(() => null) as (StartReply & { code?: string; error?: string }) | null;
+  if (response.ok) return body ?? {};
+  throw startRefusal(response.status, body?.code, body?.error);
+}
+
+/** Why the API wouldn't start the meter. The message is the API's, which names the workspace's actual problem. */
+function startRefusal(status: number, code: string | undefined, error: string | undefined): YoobError {
+  const fallback = error ?? `The Yoob session couldn't be started (HTTP ${status}).`;
+  switch (code) {
+    case "quota_exceeded":
+    case "monthly_cap_reached": return new YoobError("out-of-credit", fallback);
+    case "sandbox_limit":
+    case "suspended": return new YoobError("session-ended", fallback, { reason: code });
+    case "key_revoked": return new YoobError("unauthorized", fallback);
+  }
+  if (status === 402) return new YoobError("out-of-credit", fallback);
+  if (status === 401 || status === 403) return new YoobError("unauthorized", fallback);
+  // 404 means the session is gone; the caller opens a new one rather than giving up.
+  if (status === 404 || status === 410) return new YoobError("session-ended", fallback, { reason: "gone" });
+  return new YoobError("session-ended", fallback);
+}
+
 /** Sends the final heartbeat that ends a session. Best effort. */
 export async function endSession(apiBase: string, token: string, keepalive = false): Promise<void> {
   await fetch(`${apiBase.replace(/\/+$/, "")}/api/v1/sessions/end`, {

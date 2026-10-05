@@ -145,6 +145,9 @@ interface ServerEvent {
  * (`getClientSecret`). Microphone audio goes from the browser to the voice service; replies stream into the avatar,
  * which plays them in sync.
  * Speaking over the character interrupts it, and the model is told how much of its reply was heard.
+ *
+ * This is what starts and stops the metered session: `start()` starts the meter once the microphone is live, and
+ * `stop()` ends the session so the last slice is billed and nothing accrues after the user is done.
  */
 export class YoobConversation {
   private socket?: WebSocket;
@@ -197,6 +200,10 @@ export class YoobConversation {
       if (this.closing) { this.starting = false; this.stop(); return; } // stop() was called while starting.
       // The service may close the socket while the microphone permission prompt is open (an expired grant, a quota).
       if (!this.socket) throw this.closeFailure ?? new YoobError("network", "The conversation disconnected.");
+      // The microphone is live and the character can hear: this is the session the user is paying for, so the meter
+      // starts here rather than at prepare(), which only downloaded the character. A refusal stops the conversation
+      // before any of it happens.
+      await this.avatar.startMetering();
       this.starting = false;
       this.setState("listening");
       if (this.options.greet) this.send({ type: "response.create" });
@@ -221,12 +228,16 @@ export class YoobConversation {
     this.setState("thinking");
   }
 
-  /** Ends the conversation and releases the microphone. The avatar stays on screen. */
+  /**
+   * Ends the conversation, releases the microphone and ends the metered session, so nothing is billed past the
+   * moment the user stopped talking. The character stays on screen; `start()` opens a fresh session.
+   */
   stop(): void {
     this.closing = true;
     for (const off of this.unsubscribe.splice(0)) off();
     this.avatar.microphone.stop();
     this.avatar.interrupt();
+    void this.avatar.endSession();
     this.socket?.close(1000, "done");
     this.socket = undefined;
     this.activeResponse = undefined;

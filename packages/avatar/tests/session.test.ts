@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SessionMonitor, type SessionMonitorOptions } from "../src/session";
+import { SessionMonitor, startSession, type SessionMonitorOptions } from "../src/session";
 import { YoobError } from "../src/cdn";
 
 type Reply = { status: number; body?: unknown } | Error;
@@ -275,4 +275,57 @@ test("fails closed without a session token", async () => {
   await h.drive(h.monitor.beatNow());
   assert.equal(h.requests.length, 0);
   assert.equal(h.ended[0]?.code, "unauthorized");
+});
+
+/** A `/api/v1/sessions/start` endpoint that answers once. */
+function startHarness(status: number, body: unknown) {
+  const calls: Array<{ url: string; method?: string; auth: string }> = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    calls.push({ url, method: init.method, auth: (init.headers as Record<string, string>).authorization });
+    return new Response(JSON.stringify(body), { status });
+  }) as typeof fetch;
+  return { calls, restore: () => { globalThis.fetch = original; } };
+}
+
+test("starting the meter posts the session token and returns the cap", async () => {
+  const { calls, restore } = startHarness(200, { metered_from: 1700, max_session_seconds: 120, sandbox: true });
+  try {
+    const reply = await startSession("https://la.yoob.com/", "st_1");
+    assert.equal(calls[0].url, "https://la.yoob.com/api/v1/sessions/start");
+    assert.equal(calls[0].method, "POST");
+    assert.equal(calls[0].auth, "Bearer st_1");
+    assert.equal(reply.max_session_seconds, 120);
+    assert.equal(reply.metered_from, 1700);
+  } finally { restore(); }
+});
+
+test("a refused start says what is wrong rather than failing as a network error", async () => {
+  const cases: Array<[number, string, string]> = [
+    [402, "quota_exceeded", "out-of-credit"],
+    [402, "monthly_cap_reached", "out-of-credit"],
+    [402, "sandbox_limit", "session-ended"],
+    [403, "key_revoked", "unauthorized"],
+  ];
+  for (const [status, code, expected] of cases) {
+    const { restore } = startHarness(status, { code, error: "Nope." });
+    try {
+      await assert.rejects(startSession("https://la.yoob.com", "st_1"), (error: YoobError) => {
+        assert.equal(error.code, expected);
+        assert.equal(error.message, "Nope.");
+        return true;
+      });
+    } finally { restore(); }
+  }
+});
+
+test("a session the API has forgotten is reported as gone, not as a refusal", async () => {
+  const { restore } = startHarness(404, { error: "Unknown or already-ended session." });
+  try {
+    await assert.rejects(startSession("https://la.yoob.com", "st_1"), (error: YoobError) => {
+      assert.equal(error.code, "session-ended");
+      assert.equal(error.details.reason, "gone");
+      return true;
+    });
+  } finally { restore(); }
 });
