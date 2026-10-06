@@ -37,6 +37,13 @@ export interface YoobCredentials {
   /** Where heartbeats go. Pass the session response through unchanged and this is set for you. */
   api_base?: string;
   cdn_base?: string;
+  /**
+   * Keys for sealed character files, by key id, base64. Yoob returns them when the CDN serving your workspace seals
+   * its chunks; pass the session response through unchanged and they are used for you. A CDN that does not seal sends
+   * none and none are needed.
+   */
+  content_keys?: Record<string, string>;
+  content_key_id?: string;
 }
 
 export type YoobPhase =
@@ -390,7 +397,11 @@ export class YoobAvatar {
     this.endCurrentSession();
     this.metering = undefined;
     this.credentials = checkCredentials(await this.options.getCredentials());
-    const access = { cdnBase: this.cdnBase, downloadToken: this.credentials.download_token };
+    const access = {
+      cdnBase: this.cdnBase,
+      downloadToken: this.credentials.download_token,
+      contentKeys: this.credentials.content_keys,
+    };
     this.access = access;
     // Heartbeats run from here so the session stays alive and its download grant keeps being renewed. They cost
     // nothing until startMetering() — the download is not what the caller is buying.

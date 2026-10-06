@@ -57,6 +57,11 @@ export class RuntimeAssetStore {
     return this.manifestValue;
   }
 
+  /** Forgets a file's bytes, so a model handed to ORT is not also kept on the heap for the session. */
+  release(path: string): void {
+    this.chunks.release(path);
+  }
+
   async bytes(path: string): Promise<ArrayBuffer> {
     const started = performance.now();
     const data = await this.chunks.bytes(path, (bytes, cached) => {

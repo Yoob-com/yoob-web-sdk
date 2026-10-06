@@ -1,5 +1,6 @@
 // Character packs on cdn.yoob.com: signed manifests and content-addressed, verified chunks.
 // Used by the page (manifest, poster, idle video) and by the render worker (models and banks).
+import { contentKeys, openChunk, type ContentKeys } from "./envelope";
 
 export interface ManifestChunk { sha256: string; size: number }
 export interface ManifestFile { path: string; size: number; sha256: string; tier: number; chunks: ManifestChunk[] }
@@ -32,6 +33,11 @@ export interface CdnAccess {
   cdnBase: string;
   /** Read before every request, so a grant renewed by a heartbeat is used from the next request on. */
   downloadToken: string;
+  /**
+   * Keys for sealed chunks, by key id, base64. From the session your backend opened; a CDN that does not seal sends
+   * none and none are needed. A rotation hands out the retired key as well, so chunks cached under it still open.
+   */
+  contentKeys?: Record<string, string>;
 }
 
 export class YoobError extends Error {
@@ -59,7 +65,15 @@ const SIGNING_KEYS: Record<string, string> = {
   "yoob-2026-09": "QEpH/whI1TpREBfxZzdZG9JNZ9EY9UpQmWu0vqfpi/s=",
 };
 
-const CACHE_NAME = "yoob-chunks-v1";
+/**
+ * v2 holds chunks exactly as the CDN sent them, which with a content key means sealed.
+ *
+ * The name had to change: v1 entries are plaintext, and plaintext is indistinguishable from an unsealed chunk by
+ * length, so an old cache would have gone on quietly serving decrypted weights from disk forever. v1 is deleted
+ * rather than left to age out — it is a copy of the models sitting in the origin's storage.
+ */
+const CACHE_NAME = "yoob-chunks-v2";
+const LEGACY_CACHES = ["yoob-chunks-v1"];
 const PARALLEL_CHUNKS = 6;
 
 export function base64ToBytes(text: string): Uint8Array<ArrayBuffer> {
@@ -166,6 +180,7 @@ function trim(value: string): string {
  */
 export class ChunkStore {
   private cache?: Promise<Cache | undefined>;
+  private keys?: ContentKeys | null;
   private readonly files = new Map<string, Promise<ArrayBuffer>>();
 
   constructor(private readonly access: CdnAccess, private readonly manifest: CharacterManifest) {}
@@ -187,9 +202,30 @@ export class ChunkStore {
     return pending;
   }
 
+  /**
+   * Forgets a file's bytes.
+   *
+   * `bytes()` memoises, which is right for the tables the renderer reads repeatedly and wrong for the models: ORT
+   * copies those into its own memory at session open, so holding the originals keeps a second plaintext copy of the
+   * weights on the heap — and in any heap snapshot — for as long as the avatar is on screen.
+   */
+  release(path: string): void {
+    this.files.delete(path);
+  }
+
   private openCache(): Promise<Cache | undefined> {
-    this.cache ??= (typeof caches === "undefined" ? Promise.resolve(undefined) : caches.open(CACHE_NAME).catch(() => undefined));
+    this.cache ??= (typeof caches === "undefined"
+      ? Promise.resolve(undefined)
+      : Promise.all(LEGACY_CACHES.map((name) => caches.delete(name).catch(() => undefined)))
+          .then(() => caches.open(CACHE_NAME))
+          .catch(() => undefined));
     return this.cache;
+  }
+
+  /** The session's content keys, imported once. Undefined when the CDN does not seal. */
+  private content(): ContentKeys | undefined {
+    if (this.keys === undefined) this.keys = contentKeys(this.access.contentKeys) ?? null;
+    return this.keys ?? undefined;
   }
 
   private async load(file: ManifestFile, onBytes: (bytes: number, cached: boolean) => void): Promise<ArrayBuffer> {
@@ -212,25 +248,44 @@ export class ChunkStore {
     return output.buffer;
   }
 
+  /**
+   * One chunk, opened and verified.
+   *
+   * What goes in the cache is what arrived — sealed, when the CDN seals — so the decrypted bytes exist only as the
+   * value this returns. That is the whole of "never stored decrypted": there is no branch that could write them.
+   *
+   * The checksum is still taken after opening. The seal proves the bytes came from whoever holds the content key; the
+   * SHA-256 proves they are the chunk the signed manifest names, which is the only thread back to the manifest
+   * signature and the one check a compromised CDN cannot satisfy.
+   */
   private async chunk(chunk: ManifestChunk, onBytes: (bytes: number, cached: boolean) => void): Promise<ArrayBuffer> {
     const url = `${trim(this.access.cdnBase)}/v1/chunks/${chunk.sha256}`;
     const cache = await this.openCache();
     const cached = await cache?.match(url).catch(() => undefined);
     if (cached) {
-      const data = await cached.arrayBuffer();
-      if (data.byteLength === chunk.size && await sha256Hex(data) === chunk.sha256) {
+      const opened = await this.open(await cached.arrayBuffer(), chunk).catch(() => undefined);
+      if (opened) {
         onBytes(chunk.size, true);
-        return data;
+        return opened;
       }
+      // Unreadable now: a key that has since been retired, or a damaged entry. Fetch it again rather than fail.
       await cache?.delete(url).catch(() => undefined);
     }
+
     const response = await request(url, this.access);
-    const data = await response.arrayBuffer();
-    if (data.byteLength !== chunk.size || await sha256Hex(data) !== chunk.sha256) {
+    const received = await response.arrayBuffer();
+    const data = await this.open(received, chunk);
+    await cache?.put(url, new Response(received, { headers: { "content-type": "application/octet-stream" } }))
+      .catch(() => undefined);
+    onBytes(chunk.size, false);
+    return data;
+  }
+
+  private async open(received: ArrayBuffer, chunk: ManifestChunk): Promise<ArrayBuffer> {
+    const data = await openChunk(received, chunk.sha256, chunk.size, this.content());
+    if (await sha256Hex(data) !== chunk.sha256) {
       throw new YoobError("invalid-assets", `Chunk ${chunk.sha256.slice(0, 12)} failed verification.`);
     }
-    await cache?.put(url, new Response(data, { headers: { "content-type": "application/octet-stream" } })).catch(() => undefined);
-    onBytes(chunk.size, false);
     return data;
   }
 }
@@ -242,11 +297,13 @@ export async function pruneChunkCache(keep: CharacterManifest[]): Promise<void> 
   if (!cache) return;
   const wanted = new Set(keep.flatMap((m) => m.files.flatMap((f) => f.chunks.map((c) => c.sha256))));
   for (const request of await cache.keys()) {
-    const sha = request.url.split("/").pop() ?? "";
+    // The path, not the raw URL: a query string would make every entry look unwanted and empty the cache on load.
+    const sha = new URL(request.url).pathname.split("/").pop() ?? "";
     if (!wanted.has(sha)) await cache.delete(request);
   }
 }
 
 export async function clearChunkCache(): Promise<void> {
-  if (typeof caches !== "undefined") await caches.delete(CACHE_NAME);
+  if (typeof caches === "undefined") return;
+  await Promise.all([CACHE_NAME, ...LEGACY_CACHES].map((name) => caches.delete(name).catch(() => undefined)));
 }

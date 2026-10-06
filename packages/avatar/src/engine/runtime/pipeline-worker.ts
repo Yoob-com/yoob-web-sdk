@@ -202,6 +202,9 @@ async function initialize(): Promise<void> {
   post({ type: "status", message: "Opening isolated audio + geometry worker…",
     stage: "opening" });
   const [featherModel, geometryModel] = await Promise.all([featherBytes, geometryBytes]);
+  // The store has handed them over; it must not keep a copy. These two are transferred to the audio+geometry worker
+  // below, which detaches them here, so there is nothing left to overwrite on this side.
+  for (const path of MODEL_ASSET_PATHS.slice(0, 2)) store.release(path);
   audioGeometry = await supervised(
     "Opening audio + geometry worker",
     "opening",
@@ -242,6 +245,10 @@ async function initialize(): Promise<void> {
       runtimeRendererSpatialContract,
     ),
   );
+  // ORT holds its own copy now. Drop ours and overwrite it: the weights stay in the runtime's memory for the session
+  // either way, but there is no reason to leave a second readable copy on the JS heap.
+  store.release("models/serve320_renderer_c32_fp16.onnx");
+  rendererModel.fill(0);
   post({
     type: "status",
     message: `Renderer open${renderer.graphCaptureEnabled ? " · graph capture" : ""}`
