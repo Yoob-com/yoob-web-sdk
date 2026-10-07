@@ -17,13 +17,17 @@
         <p id="status" aria-live="polite">Checking this browser…</p>
         <progress id="progress" max="1" value="0" hidden></progress>
         <div class="row">
-          <button id="talk" type="button" disabled>Talk to Luna</button>
+          <button id="talk" type="button" disabled>Talk</button>
           <button id="mute" type="button" class="icon" aria-pressed="false" aria-label="Mute microphone" disabled>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
           </button>
           <div class="meter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <span id="meter-bar"></span>
           </div>
+        </div>
+        <div class="row">
+          <label for="character-picker">Character</label>
+          <select id="character-picker"></select>
         </div>
         <div class="row">
           <label for="microphone">Microphone</label>

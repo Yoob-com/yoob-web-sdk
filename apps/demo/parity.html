@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FeatherTalk Parity</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #f6f5f2; --fg: #1d1c1a; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #151413; --fg: #eceae6; } }
+      body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; }
+      pre { white-space: pre-wrap; }
+      #character { width: 270px; height: 480px; position: relative; }
+    </style>
+  </head>
+  <body>
+    <h1>FeatherTalk parity and speed</h1>
+    <p>Development page: <code>?pack=/packs/&lt;id&gt;/&amp;wav=/ref/tutor-mix-30.wav&amp;mode=offline|live&amp;run=&lt;name&gt;</code></p>
+    <button id="go" type="button">Run</button>
+    <div id="character"></div>
+    <pre id="log"></pre>
+    <script type="module" src="/src/parity.ts"></script>
+  </body>
+</html>
