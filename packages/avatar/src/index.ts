@@ -2,7 +2,8 @@ import {
   ChunkStore, SDK_VERSION, YoobError, clearChunkCache, fetchManifest, pruneChunkCache,
   type CharacterManifest,
 } from "./cdn";
-import type { RemoteAudioTrack } from "./engine/audio/conversation-audio";
+import { ConversationAudio, type RemoteAudioTrack } from "./engine/audio/conversation-audio";
+import { FeatherTalkCoordinator } from "./engine/feathertalk/coordinator";
 import { RenderCoordinator } from "./engine/runtime/render-coordinator";
 import type { RendererSpatialContract } from "./engine/runtime/generated/runtime-tier-contract";
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
@@ -50,12 +51,17 @@ export interface YoobProgress {
 export interface YoobAvatarOptions {
   /** Element the character is drawn into. It fills the element, cropping to keep its aspect ratio. */
   container: HTMLElement;
-  /** Character id, for example `"luna-anime"`. */
+  /** Character id, for example `"luna-anime"` or `"astrid"`. */
   character: string;
+  /**
+   * Development only: load a FeatherTalk character pack (packages/avatar/FORMAT.md) from this URL instead of the Yoob
+   * CDN. No session is opened and nothing is metered; `getCredentials` is not called. Never ship a page with this set.
+   */
+  packUrl?: string;
   /** Pin a character version. The newest compatible version is used by default. */
   version?: string;
   /** Asks your backend for a Yoob session. Called again when a session expires. */
-  getCredentials: () => Promise<YoobCredentials>;
+  getCredentials?: () => Promise<YoobCredentials>;
   /** `"cover"` (default) fills the container; `"contain"` letterboxes. */
   fit?: "cover" | "contain";
   /**
@@ -99,13 +105,28 @@ const SAMPLE_RATE = 24_000;
  * A talking character in the page. Create it, call `prepare()`, then pass speech to `speak()`.
  * The avatar plays the audio itself so the lips stay in sync.
  */
+/** What the avatar needs from either engine. */
+interface AvatarEngine {
+  readonly audio: ConversationAudio;
+  appendStreamingAudio(responseId: string, pcm: Int16Array, final?: boolean): number;
+  cancel(): number;
+  readonly playedAudioMs: number;
+  updateDownloadToken(downloadToken: string): void;
+  destroy(): void;
+}
+
 export class YoobAvatar {
   private phaseValue: YoobPhase = "not-prepared";
   private readonly root: HTMLDivElement;
   private readonly poster: HTMLImageElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly video: HTMLVideoElement;
-  private coordinator?: RenderCoordinator;
+  private coordinator?: AvatarEngine;
+  /** The voice output and microphone, shared by whichever engine draws the character. */
+  private readonly audioOut = new ConversationAudio();
+  /** The character's engine, once its manifest is known: `anime-web` or `feathertalk-web`. */
+  private engineKind?: string;
+  private featherCanvas?: HTMLCanvasElement;
   private credentials?: YoobCredentials;
   private manifestValue?: CharacterManifest;
   private preparing?: Promise<void>;
@@ -120,7 +141,7 @@ export class YoobAvatar {
   private stopListeners: Array<(error: YoobError) => void> = [];
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
   /** The user's microphone: device choice, mute, level and audio packets. */
-  readonly microphone = new YoobMicrophone(() => this.engine().audio);
+  readonly microphone = new YoobMicrophone(() => this.audioOut);
 
   constructor(private readonly options: YoobAvatarOptions) {
     const fit = options.fit ?? "cover";
@@ -196,7 +217,8 @@ export class YoobAvatar {
    * Call from a click or key press before the first `speak()`, so the browser allows sound. `speak()` also tries.
    */
   async unlockAudio(): Promise<void> {
-    await this.engine().audio.activatePlayback();
+    this.checkUsable();
+    await this.audioOut.activatePlayback();
   }
 
   /**
@@ -237,7 +259,8 @@ export class YoobAvatar {
    * `YoobLiveKitSession` from `@yoob/avatar/livekit` does all of this for a LiveKit agent.
    */
   async attachAudioTrack(track: YoobAudioTrack, onAudio: (pcm: Int16Array) => void): Promise<() => void> {
-    const audio = this.engine().audio;
+    this.checkUsable();
+    const audio = this.audioOut;
     const cleanup = await audio.tapRemoteTrack(track, onAudio);
     return () => audio.stopRemoteTap(cleanup);
   }
@@ -251,6 +274,7 @@ export class YoobAvatar {
     this.microphone.stop();
     this.coordinator?.destroy();
     this.coordinator = undefined;
+    this.audioOut.close();
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.root.remove();
     this.credentials = undefined;
@@ -266,7 +290,7 @@ export class YoobAvatar {
     this.utterance += 1;
     this.speaking = true;
     this.ended = false;
-    void this.engine().audio.activatePlayback().catch(() => undefined);
+    void this.audioOut.activatePlayback().catch(() => undefined);
     this.setPhase("speaking");
   }
 
@@ -276,18 +300,76 @@ export class YoobAvatar {
     if (this.phaseValue === "speaking") this.setPhase(this.coordinator ? "ready" : "not-prepared");
   }
 
-  private engine(): RenderCoordinator {
+  private checkUsable(): void {
     if (this.destroyed) throw new YoobError("renderer", "This avatar was destroyed.");
     if (this.phaseValue === "stopped") {
       throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped. Call prepare() to start a new one.");
+    }
+  }
+
+  private engine(): AvatarEngine {
+    this.checkUsable();
+    if (this.engineKind === "feathertalk-web") {
+      if (!this.coordinator) throw new YoobError("renderer", "Call prepare() before speak().");
+      return this.coordinator;
     }
     this.coordinator ??= new RenderCoordinator(this.canvas, this.video, {
       onFirstHostFrame: () => { this.canvas.style.opacity = "1"; },
       onPlaybackEnded: () => this.finishUtterance(),
       onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
       onRuntimeEvent: (event) => this.runtimeEvent?.(event),
-    }, { lipCadence: this.options.lipCadence });
+    }, { lipCadence: this.options.lipCadence }, this.audioOut);
     return this.coordinator;
+  }
+
+  /** The FeatherTalk engine on its own canvas (a WebGPU canvas drawn from a worker). */
+  private featherTalk(): FeatherTalkCoordinator {
+    if (this.coordinator instanceof FeatherTalkCoordinator) return this.coordinator;
+    this.coordinator?.destroy();
+    const canvas = document.createElement("canvas");
+    Object.assign(canvas.style, { position: "absolute", inset: "0", width: "100%", height: "100%",
+      objectFit: this.options.fit ?? "cover", opacity: "0", transition: "opacity 200ms ease" });
+    this.canvas.style.display = "none";
+    this.root.append(canvas);
+    this.featherCanvas?.remove();
+    this.featherCanvas = canvas;
+    const coordinator = new FeatherTalkCoordinator(canvas, this.audioOut, {
+      onPlaybackEnded: () => this.finishUtterance(),
+      onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
+    });
+    this.coordinator = coordinator;
+    return coordinator;
+  }
+
+  /** Loads a FeatherTalk character (`feathertalk-web`) from the CDN manifest or, in development, a pack URL. */
+  private async loadFeatherTalk(store: ChunkStore | undefined, manifest: CharacterManifest | undefined): Promise<void> {
+    this.engineKind = "feathertalk-web";
+    const coordinator = this.featherTalk();
+    let workerStart = 0, total = 0;
+    if (store && manifest) {
+      total = manifest.files.reduce((sum, file) => sum + file.size, 0);
+      const poster = await store.bytes(manifest.poster);
+      workerStart = poster.byteLength;
+      this.poster.src = this.objectUrl(poster, "image/jpeg");
+      this.options.onProgress?.({ completedBytes: workerStart, totalBytes: total, fraction: total ? workerStart / total : 0 });
+    } else if (this.options.packUrl) {
+      this.poster.src = `${this.options.packUrl.replace(/\/?$/, "/")}still/base.jpg`;
+    }
+    this.setPhase("warming");
+    const source = store && manifest && this.access
+      ? { kind: "cdn" as const, cdnBase: this.access.cdnBase, downloadToken: this.access.downloadToken, manifest,
+        pack: (manifest.runtime as { pack?: string } | undefined)?.pack ?? "pack.json" }
+      : { kind: "url" as const, base: new URL(this.options.packUrl!, location.href).href };
+    const progress = (loaded: number, bytes: number) => {
+      const all = Math.max(total, bytes + workerStart), done = Math.min(all, workerStart + loaded);
+      this.options.onProgress?.({ completedBytes: done, totalBytes: all, fraction: all ? done / all : 0 });
+    };
+    coordinator.onProgress = progress;
+    await this.unlessStopped(coordinator.initialize(source, {
+      cadence: this.options.lipCadence === "step" ? "step" : "blend",
+      ortWasmUrl: store ? `${this.cdnBase}/${ORT_WASM_PATH}` : undefined,
+    }));
+    if (this.featherCanvas) this.featherCanvas.style.opacity = "1";
   }
 
   private async load(): Promise<void> {
@@ -295,6 +377,14 @@ export class YoobAvatar {
     if (!support.supported) throw new YoobError("unsupported", support.reason ?? "WebGPU is required.");
     this.stoppedError = undefined;
     this.setPhase("downloading");
+    if (this.options.packUrl) {
+      // Development: a local FeatherTalk pack, no session.
+      await this.loadFeatherTalk(undefined, undefined);
+      this.options.onProgress?.({ completedBytes: 1, totalBytes: 1, fraction: 1 });
+      this.setPhase("ready");
+      return;
+    }
+    if (!this.options.getCredentials) throw new YoobError("unauthorized", "getCredentials is required.");
     this.stopHeartbeat();
     this.endCurrentSession();
     this.credentials = checkCredentials(await this.options.getCredentials());
@@ -306,9 +396,18 @@ export class YoobAvatar {
     this.manifestValue = manifest;
     this.root.setAttribute("aria-label", manifest.displayName);
     const runtime = manifest.runtime;
+    if (manifest.engine === "feathertalk-web") {
+      await this.loadFeatherTalk(new ChunkStore(access, manifest), manifest);
+      this.options.onProgress?.({ completedBytes: 1, totalBytes: 1, fraction: 1 });
+      void pruneChunkCache([manifest]).catch(() => undefined);
+      if (!this.monitor?.active) throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
+      this.setPhase("ready");
+      return;
+    }
     if (!runtime || manifest.engine !== "anime-web") {
       throw new YoobError("unsupported", `${manifest.character} has no web renderer in this SDK version.`);
     }
+    this.engineKind = "anime-web";
 
     const store = new ChunkStore(access, manifest);
     const total = manifest.files.reduce((sum, file) => sum + file.size, 0);
@@ -328,7 +427,7 @@ export class YoobAvatar {
     this.video.load();
     // The worker downloads the rest; count everything else as it lands.
     const workerBytes = total - completed;
-    const coordinator = this.engine();
+    const coordinator = this.engine() as RenderCoordinator;
     const workerStart = completed;
 
     this.setPhase("warming");
@@ -418,6 +517,7 @@ export class YoobAvatar {
 
   /** The API ended the session (it was idle too long): open a new one through the app's backend. */
   private async renewSession(): Promise<void> {
+    if (!this.options.getCredentials) return;
     const next = checkCredentials(await this.options.getCredentials());
     if (this.destroyed) return;
     this.credentials = next;
@@ -458,6 +558,7 @@ export class YoobAvatar {
     this.coordinator?.destroy();
     this.coordinator = undefined;
     this.canvas.style.opacity = "0";
+    if (this.featherCanvas) this.featherCanvas.style.opacity = "0";
     this.video.removeAttribute("src");
     this.video.load();
     this.setPhase("stopped");

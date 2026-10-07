@@ -319,11 +319,17 @@ Using your own voice stack? Call `mic.start()` and read `mic.on("audio", pcm => 
 
 ## Characters
 
-| Id | Style | Download |
-|---|---|---|
-| `luna-anime` | Anime | 37 MB |
+| Id | Style | Engine | Download |
+|---|---|---|---|
+| `luna-anime` | Anime | `anime-web` | 37 MB |
+| `astrid`, `valentina`, `leonie`, `linda`, `santiago`, `julien`, `lars` | Realistic | `feathertalk-web` | 30-35 MB |
+| `lina`, `zoe`, `maya`, `ren`, `kofi`, `bruno` | Realistic | `feathertalk-web` | 30-31 MB |
 
-`luna-realistic` is available in the [iOS SDK](https://github.com/Yoob-com/yoob-ios-sdk). Its web renderer is on the way.
+The realistic characters are the Luna app's: the character's own footage plays under the face along a head path that
+moves as she does when she listens or speaks, and only the lips are drawn, from the voice, 25 times a second, with the
+app's blinks, silence seal and lip finish. They render in a worker on WebGPU; the footage is HEVC where the browser
+decodes it (Chrome and Edge on Macs and most Windows PCs) and H.264 elsewhere (a larger download). `character: "<id>"`
+works as for `luna-anime`. The pack format is in [FORMAT.md](FORMAT.md).
 
 ## Network
 
