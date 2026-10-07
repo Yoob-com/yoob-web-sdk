@@ -16,6 +16,8 @@ import { CancelledError, type FrameJob, StreamingAvatar, speechBlinkSet } from "
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 const post = (message: FTWorkerToMain, transfer: Transferable[] = []) => scope.postMessage(message, transfer);
 
+/** Model milliseconds a 40 ms frame may take before frames are drawn in pairs (`watchCost`). */
+const FRAME_BUDGET_MS = 27;
 /** How far ahead of the display frames are composed. */
 const COMPOSE_AHEAD = 6;
 /** The first lip frame of a reply over the still idle face (the app's 0.22 s crossfade to speech). */
@@ -262,8 +264,28 @@ class Runtime {
     this.chain = this.chain.then(async () => {
       if (utterance !== this.utterance) return;
       for (let start = 0; start < samples.length; start += 32000) await this.pipeline.append(samples.subarray(start, start + 32000));
+      this.watchCost();
       this.pump();
     }).catch((error) => this.fail(error));
+  }
+
+  /** Model time per frame over the last 2 s of frames (encoder and renderer, ms), and where that window began. */
+  private costMark = { frames: 0, ms: 0 };
+  /**
+   * When the encoder and renderer take more of each 40 ms frame than leaves room for the compose and the display (the
+   * 288 px faces on a laptop GPU), frames are drawn two at a time (the app's `earlyBatchFrames` 2: the stand-in windows
+   * are encoded once for both, half the encoder work) and the page gives the voice a step more delay.
+   */
+  private watchCost(): void {
+    if (this.offline || this.pipeline.early.batchFrames > 1) return;
+    const s = this.pipeline.stats, frames = this.pipeline.stats.samplesIn / 640, ms = s.encodeMs + s.renderMs;
+    if (frames - this.costMark.frames < 50) return;
+    const perFrame = (ms - this.costMark.ms) / (frames - this.costMark.frames);
+    this.costMark = { frames, ms };
+    if (perFrame > FRAME_BUDGET_MS) {
+      this.pipeline.early = { ...this.pipeline.early, batchFrames: 2 };
+      post({ type: "slow", msPerFrame: perFrame });
+    }
   }
 
   clock(utterance: number, samples: number, at: number, started: boolean): void {

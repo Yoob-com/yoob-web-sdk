@@ -168,6 +168,10 @@ export class FeatherTalkCoordinator {
         break;
       case "ready": this.callbacks.onReady?.(message); break;
       case "idle": this.callbacks.onIdle?.(); break;
+      case "slow":
+        // Frames are drawn in pairs from now on: the voice waits one frame more (from the next reply).
+        this.voiceDelayMs = Math.min(300, this.voiceDelayMs + 40);
+        break;
       case "utterance":
         // As the app's VoiceDelayControl: when lip frames came late, later replies give the face more time (the voice
         // starts a step later), up to 300 ms.

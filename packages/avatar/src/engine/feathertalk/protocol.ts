@@ -50,6 +50,8 @@ export type FTWorkerToMain =
   | { type: "idle" }
   /** One utterance's frames: shown, and shown later than half a frame past their audio. */
   | { type: "utterance"; utterance: number; shown: number; late: number }
+  /** The lip models cost more GPU time than a frame lasts here: frames are now drawn in pairs (`batchFrames` 2). */
+  | { type: "slow"; msPerFrame: number }
   | { type: "capture"; frame: number; host: number; x: number; y: number; side: number; pixels: Uint8Array; raw: number; blink: number | null;
       seal: number; crop?: Uint8Array; window?: Float32Array }
   | { type: "offline-done"; frames: number; stats: FTStats }
