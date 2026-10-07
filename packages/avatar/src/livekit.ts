@@ -384,3 +384,9 @@ function peak(pcm: Int16Array): number {
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+// Shipped from this entry rather than the root: it needs `livekit-client`, which is an optional peer dependency, so
+// an app using only the Realtime path never pulls it in.
+export {
+  YoobLiveConversation, type YoobLiveConversationOptions, type YoobLiveSession,
+} from "./live-conversation.js";

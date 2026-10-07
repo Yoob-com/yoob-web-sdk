@@ -52,9 +52,17 @@ export default defineConfig({
       fileName: (_format, name) => `${name}.js`,
     },
     rollupOptions: {
-      // livekit.ts imports the core as "./index.js": keep that import, so index.js stays the whole core (its worklet
-      // URLs are relative to it) and the LiveKit entry loads the same copy.
-      external: (id, importer) => /^livekit-client(\/|$)/.test(id) || (id === "./index.js" && /src[\\/]livekit\.ts$/.test(importer ?? "")),
+      // The LiveKit entry's files import the core as "./index.js": keep that import rather than following it, so
+      // index.js stays the whole core and the LiveKit entry loads the same copy.
+      //
+      // This is load-bearing in a way that is easy to miss. Let Rollup follow the import and it hoists the core into
+      // a shared chunk, leaving index.js a stub — and the core builds its worker and worklet URLs from
+      // `import.meta.url`, which then points at `dist/chunks/` instead of `dist/`. Workers survive it (Vite rewrites
+      // those to `../workers/…`); worklets are plain `new URL("./worklets/…", moduleBase)` and do not, so audio dies
+      // with a 404 that names a path nobody wrote. Any new file in this entry has to be listed here.
+      external: (id, importer) =>
+        /^livekit-client(\/|$)/.test(id)
+        || (id === "./index.js" && /src[\\/](livekit|live-conversation)\.ts$/.test(importer ?? "")),
       output: { assetFileNames: "assets/[name]-[hash][extname]", chunkFileNames: "chunks/[name]-[hash].js" },
     },
   },
