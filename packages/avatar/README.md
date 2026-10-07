@@ -354,6 +354,22 @@ const avatar = new YoobAvatar({
 });
 ```
 
+### Voice is billed by the session, not by the voice provider
+
+What a minute costs is fixed when your backend opens the session, by its `mode`:
+
+| `mode` | what it covers |
+|---|---|
+| `full` | the character and the conversation |
+| `avatar` | the character alone |
+
+The SDK's heartbeat is what bills it. **Yoob never reads your LiveKit, your agent, your OpenAI account or any other
+voice provider** — so bring your own and nothing about billing changes, and there is no usage to export, reconcile or
+grant us access to.
+
+That holds for every path here. A `YoobLiveKitSession` pointed at a room you run on your own LiveKit meters the same
+way as one pointed at ours, because the meter was never in the room.
+
 Driving the avatar yourself, without `YoobConversation`? The first `speak()` starts the meter, or call
 `avatar.startMetering()` at whatever moment counts as the start in your app. It is idempotent, and it rejects — before
 the conversation goes ahead — if the workspace has no credit, the key was revoked, or a free allowance is used up.

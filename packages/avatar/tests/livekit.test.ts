@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Room } from "livekit-client";
 import { YoobLiveKitSession, type YoobLiveKitSessionOptions } from "../src/livekit";
-import type { YoobAvatar } from "../src/index";
+import { YoobError, type YoobAvatar } from "../src/index";
 
 type Fn = (...args: unknown[]) => void;
 
@@ -75,9 +75,14 @@ function fakeAvatar() {
   const calls: string[] = [];
   const taps = new Map<FakeTrack, (pcm: Int16Array) => void>();
   const tags = new WeakMap<Int16Array, number>();
+  let meterFails: Error | undefined;
   const avatar = {
     prepare: async () => { calls.push("prepare"); },
     unlockAudio: async () => { calls.push("unlock"); },
+    startMetering: async () => {
+      calls.push("meter");
+      if (meterFails) throw meterFails;
+    },
     speak: (pcm: Int16Array) => calls.push(`speak:${tags.get(pcm)}`),
     endSpeech: () => calls.push("end"),
     interrupt: () => { calls.push("interrupt"); return 0; },
@@ -93,7 +98,10 @@ function fakeAvatar() {
     tags.set(pcm, tag);
     taps.get(track)?.(pcm);
   };
-  return { avatar: avatar as unknown as YoobAvatar, calls, taps, packet };
+  return {
+    avatar: avatar as unknown as YoobAvatar, calls, taps, packet,
+    failMetering: (error: Error) => { meterFails = error; },
+  };
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -299,4 +307,37 @@ test("the agent leaving releases its track; a room disconnect ends the session",
   await tick();
   assert.equal(session.state, "ended");
   assert.equal(room.listenerCount(), 0);
+});
+
+test("the meter starts with the microphone, not with the character's first word", async () => {
+  // Billing is the SDK's job, not the room's: an integrator may be running their own LiveKit and their own agent, and
+  // Yoob never sees that account. Left to `speak()`, the clock would start at the first reply — so a user talking
+  // before any answer would be unbilled, and a character that never speaks would be free.
+  const { session, calls } = await setup();
+  await session.start();
+
+  assert.ok(calls.includes("meter"), "metering started");
+  assert.ok(calls.indexOf("meter") > calls.indexOf("prepare"), "after the character is prepared");
+  // No audio has arrived, so nothing has spoken; the meter is running regardless.
+  assert.ok(!calls.some((c) => c.startsWith("speak:")), "and before anyone has spoken");
+});
+
+test("a workspace with no credit never opens the microphone for long", async () => {
+  const fake = fakeAvatar();
+  fake.failMetering(new YoobError("out-of-credit", "This Yoob workspace is out of credit."));
+  const room = new FakeRoom();
+  const session = new YoobLiveKitSession(fake.avatar, { room: room as unknown as Room });
+
+  await assert.rejects(session.start(), (error: YoobError) => error.code === "out-of-credit");
+  // Refused before the conversation rather than after it, and the microphone it opened is given back.
+  assert.deepEqual(room.mic.map((m) => m.enabled), [true, false]);
+});
+
+test("meter: false leaves the meter alone and the room still works", async () => {
+  // For an app embedding the avatar in a call it is already billing by its own means.
+  const { session, calls } = await setup({ meter: false });
+  await session.start();
+
+  assert.ok(!calls.includes("meter"));
+  assert.ok(calls.includes("prepare"));
 });

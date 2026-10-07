@@ -19,6 +19,16 @@ export interface YoobLiveKitSessionOptions {
    */
   agentIdentity?: string;
   /**
+   * Meter this conversation to your Yoob workspace (default true).
+   *
+   * The session's own rate decides what a minute costs — `full` for avatar and voice, `avatar` for the character
+   * alone — and the SDK's heartbeat is what bills it. Yoob never reads your LiveKit, your agent or your voice
+   * provider, so this is the only meter and it does not care whose infrastructure the conversation ran on.
+   *
+   * Set it false only when the avatar is a passenger in a call you are billing some other way.
+   */
+  meter?: boolean;
+  /**
    * Publish the user's microphone through LiveKit (default true, with echo cancellation). Pass capture options to pick
    * a device, or false to publish it yourself.
    */
@@ -120,6 +130,20 @@ export class YoobLiveKitSession {
         this.publishedMicrophone = true;
       }
       if (!this.running) return;
+
+      // The session is live now, so start the meter now.
+      //
+      // Without this the clock starts at the character's first word, because `speak()` starts it as a fallback for an
+      // app driving the avatar itself. That fallback is right for an app we know nothing about and wrong here: a user
+      // talking for thirty seconds before any reply would be thirty unbilled seconds, and a character that never
+      // speaks would never be billed at all.
+      //
+      // Inside the `running` guard on purpose: a start that was cancelled while the microphone was opening must not
+      // leave a metered session behind. And awaited, so a workspace with no credit is refused before anyone speaks
+      // rather than after.
+      if (this.options.meter ?? true) await this.avatar.startMetering();
+      if (!this.running) return;
+
       this.setState(this.agent ? this.stateFromAgent() : "connecting");
     } catch (error) {
       const failure = error instanceof YoobError ? error : new YoobError("network", errorText(error));

@@ -28,6 +28,8 @@ export interface YoobLiveConversationOptions {
   getLiveSession: () => Promise<YoobLiveSession>;
   /** Publish the user's microphone, with echo cancellation. Default true. */
   microphone?: boolean;
+  /** Meter this conversation to your workspace (default true). See `YoobLiveKitSessionOptions.meter`. */
+  meter?: boolean;
   onState?: (state: ConversationState) => void;
   /** What the user is saying; `final` once the agent has settled on it. */
   onUserTranscript?: (text: string, final: boolean) => void;
@@ -75,6 +77,7 @@ export class YoobLiveConversation {
       this.#session = new YoobLiveKitSession(this.avatar, {
         room,
         microphone: this.options.microphone ?? true,
+        meter: this.options.meter ?? true,
         onState: (state) => this.#setState(state),
         onUserTranscript: this.options.onUserTranscript,
         onAssistantTranscript: this.options.onAssistantTranscript,
