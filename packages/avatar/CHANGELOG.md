@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Add the `feathertalk-web` engine for the 13 October 7 avatar exports, including both 144 and 288 pixel inputs.
+- Use their stock speech encoder, per-character normalization, host frames and masked BGR renderer inputs.
+- Preserve the user-activated audio context when choosing the engine; retain the existing Luna engine and signing key.
+- Support streaming speech, interruption, encrypted asset loading and the existing session lifecycle for the new engine.
+- Trust the separate `yoob-feathertalk-2026-10` manifest signing key. New packs require SDK 0.3.0.
+
 ## 0.2.0
 
 Security hardening. Needs the Yoob API that ships with it (heartbeats with renewed grants).

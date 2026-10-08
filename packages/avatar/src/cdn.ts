@@ -58,11 +58,12 @@ export class YoobError extends Error {
   }
 }
 
-export const SDK_VERSION = "0.2.1";
+export const SDK_VERSION = "0.3.0";
 
 /** Public keys whose manifest signatures the SDK accepts, by key id. */
 const SIGNING_KEYS: Record<string, string> = {
   "yoob-2026-09": "QEpH/whI1TpREBfxZzdZG9JNZ9EY9UpQmWu0vqfpi/s=",
+  "yoob-feathertalk-2026-10": "J9V9aiPa2tMbq23Z1NacMfjF0gmYwWczWDHp4WDF2N0=",
 };
 
 /**

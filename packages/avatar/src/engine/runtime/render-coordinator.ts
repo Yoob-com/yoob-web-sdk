@@ -458,7 +458,6 @@ interface PendingStreamingRender {
 }
 
 export class RenderCoordinator {
-  readonly audio = new ConversationAudio();
   readonly latency = new LatencyTrace();
   private readonly worker = new Worker(new URL("./pipeline-worker.ts", import.meta.url), {
     type: "module", name: "serve320-pipeline",
@@ -522,6 +521,7 @@ export class RenderCoordinator {
     private readonly canvas: HTMLCanvasElement,
     private readonly idleVideo: HTMLVideoElement,
     private readonly callbacks: RenderCoordinatorCallbacks = {},
+    readonly audio = new ConversationAudio(),
   ) {
     const context = canvas.getContext("2d", {
       alpha: false, desynchronized: true, willReadFrequently: true,

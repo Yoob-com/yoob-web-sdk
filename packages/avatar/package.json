@@ -1,6 +1,6 @@
 {
   "name": "@yoob/avatar",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Talking characters rendered in the browser with WebGPU. Speech in, face out.",
   "license": "Apache-2.0",
   "homepage": "https://yoob.com/docs/web/",

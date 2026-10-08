@@ -318,6 +318,18 @@ Using your own voice stack? Call `mic.start()` and read `mic.on("audio", pcm => 
 
 ## Characters
 
+SDK 0.3.0 also supports the October 7 FeatherTalk packs:
+`r2-f01-valentina`, `r2-f04-leonie`, `r2-f08-astrid`, `r2-f10-linda`,
+`r2-f12-lina`, `r2-f14-zoe`, `r2-f17-maya`, `r2-m01-santiago`,
+`r2-m03-julien`, `r2-m05-lars`, `r2-m11-ren`, `r2-m16-kofi`, and `r2-m29-bruno`.
+Pass the same ID in `YoobAvatar({ character })` and your backend session's `characters` list.
+The signed manifest chooses the engine automatically; conversation and metering APIs are unchanged.
+These packs use their own shared encoder and cannot use Luna's distilled encoder.
+Host JPEGs load as speech advances, with up to eight fetched concurrently; model and crop banks load during preparation.
+The first version uses host frame zero as the reference, a forward/backward host sequence during speech,
+and a forward looping video when idle. It does not reproduce the iOS pose-selection or still-blink controllers.
+Per-frame inference and download speed determine whether playback can sustain real time on a given device.
+
 | Id | Style | Download |
 |---|---|---|
 | `luna-anime` | Anime | 37 MB |

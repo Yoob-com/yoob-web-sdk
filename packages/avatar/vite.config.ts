@@ -41,7 +41,7 @@ export default defineConfig({
   build: {
     target: "es2022",
     outDir: "dist",
-    emptyOutDir: true,
+    emptyOutDir: false, // Retain previous hashed workers/assets for existing copies and open pages.
     sourcemap: true,
     // Worklets must be real files: a data: URL breaks pages whose CSP has no data: script source.
     assetsInlineLimit: (file) => (/-worklet\.js$/.test(file) ? false : undefined),

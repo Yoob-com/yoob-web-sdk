@@ -1,9 +1,9 @@
 import {
-  ChunkStore, SDK_VERSION, YoobError, clearChunkCache, fetchManifest, pruneChunkCache,
+  ChunkStore, SDK_VERSION, YoobError, clearChunkCache, fetchManifest,
   type CharacterManifest,
 } from "./cdn";
 import type { RemoteAudioTrack } from "./engine/audio/conversation-audio";
-import { RenderCoordinator } from "./engine/runtime/render-coordinator";
+import { AvatarCoordinator } from "./engine/runtime/avatar-coordinator";
 import type { RendererSpatialContract } from "./engine/runtime/generated/runtime-tier-contract";
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
 
@@ -131,7 +131,7 @@ export class YoobAvatar {
   private readonly poster: HTMLImageElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly video: HTMLVideoElement;
-  private coordinator?: RenderCoordinator;
+  private coordinator?: AvatarCoordinator;
   private credentials?: YoobCredentials;
   private manifestValue?: CharacterManifest;
   private preparing?: Promise<void>;
@@ -218,6 +218,8 @@ export class YoobAvatar {
       // Don't leave a metered session running behind a failed start.
       this.stopHeartbeat();
       this.endCurrentSession();
+      this.coordinator?.destroy();
+      this.coordinator = undefined;
       this.setPhase("failed");
       this.options.onError?.(failure);
       throw failure;
@@ -374,12 +376,12 @@ export class YoobAvatar {
     if (this.phaseValue === "speaking") this.setPhase(this.coordinator ? "ready" : "not-prepared");
   }
 
-  private engine(): RenderCoordinator {
+  private engine(): AvatarCoordinator {
     if (this.destroyed) throw new YoobError("renderer", "This avatar was destroyed.");
     if (this.phaseValue === "stopped") {
       throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped. Call prepare() to start a new one.");
     }
-    this.coordinator ??= new RenderCoordinator(this.canvas, this.video, {
+    this.coordinator ??= new AvatarCoordinator(this.canvas, this.video, {
       onFirstHostFrame: () => { this.canvas.style.opacity = "1"; },
       onPlaybackEnded: () => this.finishUtterance(),
       onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
@@ -410,12 +412,17 @@ export class YoobAvatar {
     this.manifestValue = manifest;
     this.root.setAttribute("aria-label", manifest.displayName);
     const runtime = manifest.runtime;
-    if (!runtime || manifest.engine !== "anime-web") {
+    if (!runtime || !["anime-web", "feathertalk-web"].includes(manifest.engine)) {
       throw new YoobError("unsupported", `${manifest.character} has no web renderer in this SDK version.`);
     }
 
     const store = new ChunkStore(access, manifest);
-    const total = manifest.files.reduce((sum, file) => sum + file.size, 0);
+    // FeatherTalk host images are fetched as the conversation advances; they are not part of prepare().
+    const preparedFiles = manifest.engine === "feathertalk-web"
+      ? manifest.files.filter((file) => !file.path.startsWith("hosts/")
+        && file.path !== "closed_audio.f32" && file.path !== "provenance.json")
+      : manifest.files;
+    const total = preparedFiles.reduce((sum, file) => sum + file.size, 0);
     let completed = 0;
     const count = (bytes: number) => {
       completed += bytes;
@@ -452,7 +459,6 @@ export class YoobAvatar {
     ));
     this.options.onProgress?.({ completedBytes: total, totalBytes: total, fraction: 1 });
     this.canvas.style.opacity = "1";
-    void pruneChunkCache([manifest]).catch(() => undefined);
     if (!this.monitor?.active) throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
     this.setPhase("ready");
   }
