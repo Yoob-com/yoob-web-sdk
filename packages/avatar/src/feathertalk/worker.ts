@@ -7,6 +7,9 @@ const scope = self as unknown as DedicatedWorkerGlobalScope;
 let access: CdnAccess, store: ChunkStore, pack: FeatherPack, bank: Uint8Array;
 let encoder: ort.InferenceSession, renderer: ort.InferenceSession;
 let epoch=0, pcm=new Int16Array(0), samples16=new Int16Array(0), final=false, nextFrame=0, busy=false, requested=false;
+/** Where this response's host walk starts. The coordinator sets it to wherever the idle loop has got to, so speech
+ *  carries on from the pose already on screen instead of cutting back to host 0. */
+let hostOffset=0;
 let resampler=new PcmResampler(24000,16000);
 let canvas: OffscreenCanvas, context: OffscreenCanvasRenderingContext2D;
 let patch: OffscreenCanvas, patchContext: OffscreenCanvasRenderingContext2D;
@@ -38,7 +41,9 @@ async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortW
   const audio=new ort.Tensor('float32',new Float32Array(40*1024),[1,40,1024]);
   const result=await renderer.run({image,audio});image.dispose();audio.dispose();
   if(result.clip_0?.dims.join(',')!==`1,3,${pack.outputSize},${pack.outputSize}`)throw new Error('FeatherTalk renderer output mismatch');
-  Object.values(result).forEach(t=>t.dispose());post({type:'ready'});
+  // The frame count and rate travel with "ready" because the coordinator maps between idle-video time and host
+  // index, and only the worker has read the pack.
+  Object.values(result).forEach(t=>t.dispose());post({type:'ready',frames:pack.frames.length,fps:pack.fps});
 }
 async function host(index:number):Promise<ImageBitmap> {
   const cached=hosts.get(index);if(cached)return cached;
@@ -57,7 +62,7 @@ async function render(requestEpoch:number) {
     const end=Math.min(nextFrame+8,available);
     if(end<=nextFrame){post({type:'batch',epoch,waiting:true});return;}
     // Fetch the upcoming hosts concurrently so network RTT is paid per batch, not per frame.
-    await Promise.all(Array.from({length:end-nextFrame},(_,i)=>host(hostIndex(nextFrame+i,pack.frames.length))));
+    await Promise.all(Array.from({length:end-nextFrame},(_,i)=>host(hostIndex(nextFrame+i+hostOffset,pack.frames.length))));
     if(epoch!==requestEpoch)return;
     const start=Math.max(0,nextFrame-16), stop=end+9;
     const wave=new Float32Array((stop-start)*640+80);
@@ -68,7 +73,7 @@ async function render(requestEpoch:number) {
       const hidden=encoded.hidden.data as Float32Array, tokens=encoded.hidden.dims[1];
       for(let frame=nextFrame;frame<end;frame++) {
         if(epoch!==requestEpoch)return;
-        const index=hostIndex(frame,pack.frames.length), hostImage=await host(index);
+        const index=hostIndex(frame+hostOffset,pack.frames.length), hostImage=await host(index);
         // The 576px renderer is expensive on laptop GPUs. Refresh its mouth at 12.5 fps
         // while keeping host motion and the 25 fps audio clock. The 288px model runs every frame.
         if(pack.innerSize===144 || frame%2===0 || !lastPixels){
@@ -108,6 +113,7 @@ scope.onmessage=({data})=>{
   else if(data.type==='grant'){if(access)access.downloadToken=data.token;}
   else if(data.type==='begin') {
     epoch=data.epoch;pcm=new Int16Array(0);samples16=new Int16Array(0);resampler=new PcmResampler(24000,16000);final=false;nextFrame=0;lastPixels=undefined;
+    hostOffset=Number.isInteger(data.host)?data.host:0;
   } else if(data.type==='audio') {
     if(data.epoch!==epoch)return;
     pcm=append(pcm,data.pcm);samples16=append(samples16,resampler.process(data.pcm));final=data.final;

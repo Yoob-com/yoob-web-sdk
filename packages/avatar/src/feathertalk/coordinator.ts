@@ -1,6 +1,7 @@
 import { ConversationAudio } from '../engine/audio/conversation-audio';
 import type { RuntimeAssetConfig } from '../engine/assets/runtime-store';
 import type { RenderCoordinatorCallbacks } from '../engine/runtime/render-coordinator';
+import { hostIndex } from './contract';
 
 export class FeatherCoordinator {
   private worker=new Worker(new URL('./worker.ts',import.meta.url),{type:'module',name:'feathertalk'});
@@ -11,6 +12,12 @@ export class FeatherCoordinator {
   private destroyed=false; private timer=0; private animation=0;
   private readyResolve?:()=>void; private readyReject?:(error:Error)=>void;
   private initTimer?:ReturnType<typeof setTimeout>;
+  /**
+   * The idle loop and the spoken frames are the same pictures in two forms: idle.mp4 is exactly the pack's host
+   * frames at `fps`, so a video time and a host index convert into each other. These three keep the two in step —
+   * `hostOffset` is where the current response's walk began, `lastHost` the host last drawn.
+   */
+  private hostCount=0; private fps=25; private hostOffset=0; private lastHost=0;
   constructor(private canvas:HTMLCanvasElement,private video:HTMLVideoElement,
     private callbacks:RenderCoordinatorCallbacks,readonly audio:ConversationAudio) {
     this.context=canvas.getContext('2d',{alpha:false})!;
@@ -21,7 +28,9 @@ export class FeatherCoordinator {
     audio.onPlaybackTick=t=>{if(t.epoch===this.epoch){this.played=t.playedSamples;this.releaseFrames();}};
     audio.onPlaybackDrained=t=>{
       if(t.epoch!==this.epoch)return;
-      this.played=t.playedSamples;this.streaming=false;this.started=false;this.clearFrames();
+      // Put the loop back where the speech left off before it resumes, or the last spoken frame and the first idle
+      // one are two unrelated poses.
+      this.played=t.playedSamples;this.realign();this.streaming=false;this.started=false;this.clearFrames();
       void video.play().catch(()=>{});callbacks.onPlaybackEnded?.(this.epoch);
     };
   }
@@ -54,6 +63,7 @@ export class FeatherCoordinator {
   private message(data:any):void {
     if(this.destroyed){data.bitmap?.close();return;}
     if(data.type==='ready'){
+      this.hostCount=data.frames??0;this.fps=data.fps??25;
       clearTimeout(this.initTimer);this.readyResolve?.();this.readyResolve=undefined;this.readyReject=undefined;return;
     }
     if(data.type==='progress'){
@@ -75,8 +85,10 @@ export class FeatherCoordinator {
   private draw=():void=>{
     if(this.destroyed)return;
     if(this.streaming&&this.started){
-      const bitmap=this.frames.get(Math.floor(this.played/960));
-      if(bitmap)this.context.drawImage(bitmap,0,0);
+      const frame=Math.floor(this.played/960), bitmap=this.frames.get(frame);
+      // Remembered from the frame actually shown, not from the newest rendered one, so a resumed loop picks up the
+      // pose the viewer last saw.
+      if(bitmap){this.context.drawImage(bitmap,0,0);this.lastHost=hostIndex(frame+this.hostOffset,this.hostCount);}
     }else if(this.video.readyState>=2){this.context.drawImage(this.video,0,0,this.canvas.width,this.canvas.height);}
     this.callbacks.onFirstHostFrame?.(performance.now());
     this.animation=requestAnimationFrame(this.draw);
@@ -86,8 +98,22 @@ export class FeatherCoordinator {
     for(const [index,bitmap] of this.frames)if(index<frame){bitmap.close();this.frames.delete(index);}
   }
   private clearFrames():void{for(const frame of this.frames.values())frame.close();this.frames.clear();}
+  /**
+   * Agree on one pose for the handover, in whichever direction it is going.
+   *
+   * Mid-speech the truth is the host last drawn; otherwise it is wherever the idle loop has played to. Both are
+   * written back to the video, so a loop that resumes and a walk that starts begin from the same frame.
+   */
+  private realign():void {
+    if(this.hostCount<=0)return;
+    const anchor=this.started?this.lastHost:Math.round(this.video.currentTime*this.fps);
+    this.hostOffset=((anchor%this.hostCount)+this.hostCount)%this.hostCount;
+    this.lastHost=this.hostOffset;
+    if(this.video.readyState>=1)this.video.currentTime=this.hostOffset/this.fps;
+  }
   cancel():number {
-    this.epoch++;this.audio.clear(this.epoch);this.worker.postMessage({type:'begin',epoch:this.epoch});
+    this.realign();
+    this.epoch++;this.audio.clear(this.epoch);this.worker.postMessage({type:'begin',epoch:this.epoch,host:this.hostOffset});
     this.response='';this.played=0;this.received=0;this.streaming=false;this.started=false;this.complete=false;this.inFlight=false;
     this.clearFrames();void this.video.play().catch(()=>{});return this.epoch;
   }
