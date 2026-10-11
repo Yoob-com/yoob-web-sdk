@@ -103,11 +103,10 @@ export class BandlimitedResampler {
 
 const WorkletProcessorBase = globalThis.AudioWorkletProcessor || class {};
 
-// After the buffer runs dry mid-utterance, playback resumes only with this much audio queued (or after the tail wait,
-// for a reply's last syllables). Resuming on each small packet made a jittery connection a string of tiny bursts:
+// After the buffer runs dry mid-utterance, playback resumes only with this much audio queued. Resuming on each
+// small packet made a jittery connection a string of tiny bursts:
 // choppy, robotic voice. The Luna app and the iOS SDK use the same values.
 export const RESTART_CUSHION_SECONDS = 0.16;
-export const TAIL_START_SECONDS = 0.12;
 
 export class Serve320PlaybackProcessor extends WorkletProcessorBase {
   constructor() {
@@ -155,7 +154,6 @@ export class Serve320PlaybackProcessor extends WorkletProcessorBase {
     this.drainedSent = false;
     this.bufferedDeviceSamples = 0;
     this.underrunDeviceSamples = 0;
-    this.resumeWait = 0;
     this.underrunCount = 0;
     this.totalUnderrunSamples = 0;
     this.maxUnderrunSamples = 0;
@@ -176,7 +174,6 @@ export class Serve320PlaybackProcessor extends WorkletProcessorBase {
     if (!force && this.underrunDeviceSamples > 0 && !this.final && this.bufferedDeviceSamples < cushion) return;
     this.finishUnderrun();
     this.running = true;
-    this.resumeWait = 0;
   }
 
   bufferedSamples() {
@@ -251,10 +248,11 @@ export class Serve320PlaybackProcessor extends WorkletProcessorBase {
     if (this.started && !this.final && written < output.length) {
       this.underrunDeviceSamples += output.length - written;
     }
-    // Audio is waiting for the cushion after an underrun: a short tail plays after TAIL_START_SECONDS anyway.
-    if (this.started && !this.running && this.bufferedDeviceSamples > 0) {
-      this.resumeWait = (this.resumeWait || 0) + output.length;
-      if (this.resumeWait >= TAIL_START_SECONDS * sampleRate) this.resume(true);
+    // Do not force a restart on a timer while the stream is still open. That
+    // used to play a short burst every 120 ms when packets arrived slowly.
+    // Finalized tails can start with whatever remains; no more PCM is coming.
+    if (this.started && !this.running && this.final && this.bufferedDeviceSamples > 0) {
+      this.resume(true);
     }
     this.advanceChunk();
     this.blocks += 1;

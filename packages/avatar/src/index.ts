@@ -66,6 +66,8 @@ export interface YoobAvatarOptions {
   getCredentials: () => Promise<YoobCredentials>;
   /** `"cover"` (default) fills the container; `"contain"` letterboxes. */
   fit?: "cover" | "contain";
+  /** Use an app-hosted idle loop instead of the character pack's idle video. */
+  idleVideoUrl?: string;
   onPhase?: (phase: YoobPhase) => void;
   onProgress?: (progress: YoobProgress) => void;
   onError?: (error: YoobError) => void;
@@ -417,11 +419,18 @@ export class YoobAvatar {
     }
 
     const store = new ChunkStore(access, manifest);
+    const videoFile = manifest.files.find((file) => file.tier === 1 && file.path.endsWith(".mp4"));
+    if (!videoFile && !this.options.idleVideoUrl) {
+      throw new YoobError("invalid-assets", "The character has no idle video.");
+    }
     // FeatherTalk host images are fetched as the conversation advances; they are not part of prepare().
-    const preparedFiles = manifest.engine === "feathertalk-web"
+    const runtimeFiles = manifest.engine === "feathertalk-web"
       ? manifest.files.filter((file) => !file.path.startsWith("hosts/")
         && file.path !== "closed_audio.f32" && file.path !== "provenance.json")
       : manifest.files;
+    const preparedFiles = this.options.idleVideoUrl
+      ? runtimeFiles.filter((file) => file.path !== videoFile?.path)
+      : runtimeFiles;
     const total = preparedFiles.reduce((sum, file) => sum + file.size, 0);
     let completed = 0;
     const count = (bytes: number) => {
@@ -432,10 +441,12 @@ export class YoobAvatar {
     // Tier 0 and 1 on the page: the poster, then the idle loop the engine draws.
     const poster = await store.bytes(manifest.poster, count);
     this.poster.src = this.objectUrl(poster, "image/jpeg");
-    const videoFile = manifest.files.find((file) => file.tier === 1 && file.path.endsWith(".mp4"));
-    if (!videoFile) throw new YoobError("invalid-assets", "The character has no idle video.");
-    const video = await store.bytes(videoFile.path, count);
-    this.video.src = this.objectUrl(video, "video/mp4");
+    if (this.options.idleVideoUrl) {
+      this.video.src = this.options.idleVideoUrl;
+    } else {
+      const video = await store.bytes(videoFile!.path, count);
+      this.video.src = this.objectUrl(video, "video/mp4");
+    }
     this.video.load();
     // The worker downloads the rest; count everything else as it lands.
     const workerBytes = total - completed;

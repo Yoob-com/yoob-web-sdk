@@ -7,6 +7,7 @@ export class FeatherCoordinator {
   private context: CanvasRenderingContext2D;
   private frames=new Map<number,ImageBitmap>();
   private epoch=0; private response=''; private played=0; private received=0;
+  private queuedSamples=0; private finalReceived=false;
   private streaming=false; private started=false; private inFlight=false; private complete=false;
   private destroyed=false; private timer=0; private animation=0;
   private readyResolve?:()=>void; private readyReject?:(error:Error)=>void;
@@ -44,8 +45,21 @@ export class FeatherCoordinator {
       this.cancel();this.response=response;this.streaming=true;this.audio.beginStream(this.epoch);
     }
     const copy=new Int16Array(pcm);
+    // Playback follows the incoming PCM clock, not the GPU renderer. A slow
+    // frame may hold the mouth pose, but must never create a gap in the voice.
+    if(copy.length){this.audio.appendStream(copy,this.epoch);this.queuedSamples+=copy.length;}
+    if(final){this.finalReceived=true;this.audio.finalizeStream(this.epoch);}
     this.worker.postMessage({type:'audio',epoch:this.epoch,pcm:copy,final},[copy.buffer]);
-    this.pump();return this.epoch;
+    this.pump();this.maybeStart();return this.epoch;
+  }
+  private maybeStart():void {
+    if(this.started||!this.streaming)return;
+    // Keep a 400 ms PCM cushion so LiveKit jitter does not empty the worklet
+    // right after playback begins. Short finalized replies use what they have.
+    if(this.queuedSamples<9600&&!this.finalReceived)return;
+    if(this.received<8&&!(this.finalReceived&&this.received>0))return;
+    this.started=true;this.video.pause();
+    void this.audio.start(this.epoch).catch(e=>this.fail(String(e)));
   }
   private pump():void {
     if(this.destroyed||!this.streaming||this.inFlight||this.complete||this.frames.size>=20)return;
@@ -63,13 +77,11 @@ export class FeatherCoordinator {
     if(data.epoch!==this.epoch){data.bitmap?.close();return;}
     if(data.type==='frame'){
       this.frames.set(data.frame,data.bitmap);this.received++;
-      this.audio.appendStream(data.pcm,this.epoch);
+      this.maybeStart();
     }else if(data.type==='batch'){
       this.inFlight=false;
-      if(data.done){this.complete=true;this.audio.finalizeStream(this.epoch);}
-      if(!this.started&&(this.received>=8||data.done&&this.received>0)){
-        this.started=true;this.video.pause();void this.audio.start(this.epoch).catch(e=>this.fail(String(e)));
-      }
+      if(data.done)this.complete=true;
+      this.maybeStart();
     }
   }
   private draw=():void=>{
@@ -88,7 +100,8 @@ export class FeatherCoordinator {
   private clearFrames():void{for(const frame of this.frames.values())frame.close();this.frames.clear();}
   cancel():number {
     this.epoch++;this.audio.clear(this.epoch);this.worker.postMessage({type:'begin',epoch:this.epoch});
-    this.response='';this.played=0;this.received=0;this.streaming=false;this.started=false;this.complete=false;this.inFlight=false;
+    this.response='';this.played=0;this.received=0;this.queuedSamples=0;this.finalReceived=false;
+    this.streaming=false;this.started=false;this.complete=false;this.inFlight=false;
     this.clearFrames();void this.video.play().catch(()=>{});return this.epoch;
   }
   get playedAudioMs():number{return Math.floor(this.played/24);}
