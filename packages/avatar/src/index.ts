@@ -19,6 +19,10 @@ export {
 export {
   YoobGeminiConversation, GEMINI_LIVE_URL, type YoobGeminiConversationOptions, type GeminiActivityDetection,
 } from "./gemini-conversation";
+// From the root, not a separate entry: unlike the LiveKit path this needs nothing but the browser's own WebRTC.
+export {
+  YoobWebRTCConversation, type YoobWebRTCConversationOptions, type YoobLiveAnswer,
+} from "./webrtc-conversation";
 export { PcmResampler } from "./resampler";
 export const version = SDK_VERSION;
 
@@ -325,6 +329,18 @@ export class YoobAvatar {
    * `speak()`. Only one track is attached at a time. Resolves to a function that detaches the track.
    * `YoobLiveKitSession` from `@yoob/avatar/livekit` does all of this for a LiveKit agent.
    */
+  /**
+   * The same as `attachAudioTrack`, for a plain WebRTC `MediaStream`: `onAudio` receives its sound as 24 kHz mono
+   * PCM16, and nothing of it is heard directly. Pass the packets you want heard to `speak()`.
+   *
+   * `YoobWebRTCConversation` does all of this for a direct GPT-Live connection.
+   */
+  async attachMediaStream(stream: MediaStream, onAudio: (pcm: Int16Array) => void): Promise<() => void> {
+    const audio = this.engine().audio;
+    const cleanup = await audio.tapMediaStream(stream, onAudio);
+    return () => audio.stopRemoteTap(cleanup);
+  }
+
   async attachAudioTrack(track: YoobAudioTrack, onAudio: (pcm: Int16Array) => void): Promise<() => void> {
     const audio = this.engine().audio;
     const cleanup = await audio.tapRemoteTrack(track, onAudio);

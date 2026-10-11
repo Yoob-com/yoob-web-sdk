@@ -234,6 +234,63 @@ export class ConversationAudio {
    * output. This keeps the supported LiveKit receive path active while the
    * synchronized playback worklet remains the only audible output.
    */
+  /**
+   * The same tap for a plain WebRTC `MediaStream`, as a direct peer connection with the model hands back.
+   *
+   * `tapRemoteTrack` below needs livekit-client's own plugin hooks; this needs nothing but Web Audio, so it is the
+   * shorter of the two. The stream is routed into the worklet through a silenced gain node exactly as the microphone
+   * is: the samples are wanted, the sound of them through the speakers is not -- the character's voice reaches the
+   * listener by being drawn and played as her, not by this element.
+   */
+  async tapMediaStream(
+    stream: MediaStream,
+    onPcm: (pcm: Int16Array) => void,
+  ): Promise<() => void> {
+    await this.initialize();
+    this.stopRemoteTap();
+    const context = this.context!;
+    const source = context.createMediaStreamSource(stream);
+    const tap = new AudioWorkletNode(context, "serve320-mic", {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+    });
+    tap.port.onmessage = ({ data }) => {
+      if (data.type === "pcm") onPcm(new Int16Array(data.pcm as ArrayBuffer));
+    };
+    tap.port.postMessage({ type: "enabled", value: true });
+    const silent = context.createGain();
+    silent.gain.value = 0;
+    source.connect(tap).connect(silent).connect(context.destination);
+
+    // Chrome will not pull from a MediaStreamAudioSourceNode fed by a peer connection unless the stream is also
+    // attached to a media element. It stays muted; the element exists to start the flow.
+    const element = document.createElement("audio");
+    element.srcObject = stream;
+    element.muted = true;
+    element.hidden = true;
+    element.setAttribute("aria-hidden", "true");
+    element.dataset.yoobRemoteAudio = "true";
+    document.body.append(element);
+
+    const cleanup = () => {
+      tap.port.postMessage({ type: "enabled", value: false });
+      tap.port.onmessage = null;
+      source.disconnect();
+      tap.disconnect();
+      silent.disconnect();
+      element.pause();
+      element.srcObject = null;
+      element.remove();
+    };
+    this.remoteTapCleanup = cleanup;
+    try {
+      await Promise.all([context.resume(), element.play().catch(() => undefined)]);
+    } catch {
+      if (this.remoteTapCleanup === cleanup) this.stopRemoteTap();
+      throw new Error("Could not start the character's audio tap.");
+    }
+    return cleanup;
+  }
+
   async tapRemoteTrack(
     track: RemoteAudioTrack,
     onPcm: (pcm: Int16Array) => void,
