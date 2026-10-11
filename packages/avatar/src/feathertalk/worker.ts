@@ -8,6 +8,23 @@ let access: CdnAccess, store: ChunkStore, pack: FeatherPack, bank: Uint8Array;
 let encoder: ort.InferenceSession, renderer: ort.InferenceSession;
 let epoch=0, pcm=new Int16Array(0), samples16=new Int16Array(0), final=false, nextFrame=0, busy=false, requested=false;
 let resampler=new PcmResampler(24000,16000);
+/**
+ * How much audio *after* a frame the renderer waits for before drawing it, in 40 ms frames.
+ *
+ * The cost of this is paid twice over: the voice cannot start until the first frames exist, so every frame of
+ * lookahead is 40 ms added to how long the listener waits to hear anything. 9 is what the pack was tuned against and
+ * stays the default; the knob is here to measure smaller values against a given pack rather than to guess at one.
+ */
+let lookahead=9;
+/**
+ * What to feed the encoder past the end of the audio received so far.
+ *
+ * Silence is the default because it is what the packs were tuned against. It reads as a pause the speaker did not
+ * take, so the mouth closes for it; mirroring back into the voice that is still going keeps the spectrum instead.
+ * Separate from `lookahead` on purpose: the two want measuring independently, and the window runs past the audio at
+ * the end of every reply even at the default lookahead, so turning this on is never a no-op.
+ */
+let mirrorPadding=false;
 let canvas: OffscreenCanvas, context: OffscreenCanvasRenderingContext2D;
 let patch: OffscreenCanvas, patchContext: OffscreenCanvasRenderingContext2D;
 let lastPixels: Uint8ClampedArray<ArrayBuffer> | undefined;
@@ -16,8 +33,10 @@ const post=(message: unknown, transfer: Transferable[]=[])=>scope.postMessage(me
 function append(a: Int16Array, b: Int16Array): Int16Array<ArrayBuffer> {
   const result=new Int16Array(a.length+b.length); result.set(a);result.set(b,a.length);return result;
 }
-async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortWasmUrl:string}) {
+async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortWasmUrl:string; lookaheadFrames?:number; mirrorPadding?:boolean}) {
   access=config; store=new ChunkStore(access,config.manifest);setOrtWasmUrl(config.ortWasmUrl);
+  if(Number.isInteger(config.lookaheadFrames)&&config.lookaheadFrames!>=0)lookahead=config.lookaheadFrames!;
+  mirrorPadding=config.mirrorPadding===true;
   let loadedBytes=0;
   const load=(path:string)=>store.bytes(path,n=>post({type:'progress',loadedBytes:loadedBytes+=n}));
   pack=JSON.parse(new TextDecoder().decode(await load('feathertalk.json')));validatePack(pack);
@@ -53,15 +72,26 @@ async function render(requestEpoch:number) {
   if(busy){requested=true;return;}busy=true;
   try {
     const totalFrames=Math.ceil(pcm.length/960);
-    const available=final?totalFrames:Math.max(0,Math.floor((samples16.length-80)/640)-9);
+    const available=final?totalFrames:Math.max(0,Math.floor((samples16.length-80)/640)-lookahead);
     const end=Math.min(nextFrame+8,available);
     if(end<=nextFrame){post({type:'batch',epoch,waiting:true});return;}
     // Fetch the upcoming hosts concurrently so network RTT is paid per batch, not per frame.
     await Promise.all(Array.from({length:end-nextFrame},(_,i)=>host(hostIndex(nextFrame+i,pack.frames.length))));
     if(epoch!==requestEpoch)return;
-    const start=Math.max(0,nextFrame-16), stop=end+9;
+    const start=Math.max(0,nextFrame-16), stop=end+lookahead;
     const wave=new Float32Array((stop-start)*640+80);
-    for(let i=0;i<wave.length;i++)wave[i]=((samples16[start*640+i]??0)/32768-pack.waveformMean)/pack.waveformStd;
+    const n=samples16.length;
+    const past=(i:number)=>{
+      if(!mirrorPadding||n===0)return 0;
+      // Fold back: the sample `over` steps past the end is the one `over` steps before it, wrapping if the reply is
+      // shorter than the overrun.
+      return samples16[n-1-((i-n)%n)]!;
+    };
+    for(let i=0;i<wave.length;i++){
+      const at=start*640+i;
+      const sample=at<n?samples16[at]!:past(at);
+      wave[i]=(sample/32768-pack.waveformMean)/pack.waveformStd;
+    }
     const tensor=new ort.Tensor('float32',wave,[1,wave.length]);
     const encoded=await encoder.run({audio:tensor});tensor.dispose();
     try {

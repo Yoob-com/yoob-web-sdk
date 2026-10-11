@@ -17,6 +17,12 @@ export interface RuntimeAssetConfig extends CdnAccess {
   manifest: CharacterManifest;
   /** Where the patched ONNX Runtime WebAssembly binary is served. */
   ortWasmUrl: string;
+  /**
+   * Renderer tuning, for measuring a pack against something other than its defaults. Both are FeatherTalk-only and
+   * both are meant for experiments: leave them unset and the pack behaves exactly as it was tuned.
+   */
+  lookaheadFrames?: number;
+  mirrorPadding?: boolean;
 }
 
 export interface RuntimeAssetEvent {

@@ -68,6 +68,21 @@ export interface YoobAvatarOptions {
   fit?: "cover" | "contain";
   /** Use an app-hosted idle loop instead of the character pack's idle video. */
   idleVideoUrl?: string;
+  /**
+   * Renderer tuning for FeatherTalk characters, for measuring a pack against something other than its defaults.
+   *
+   * `lookaheadFrames` is how much audio *after* a frame the renderer waits for before drawing it, in 40 ms frames
+   * (default 9, i.e. 360 ms). It is paid twice: nothing can be heard until the first frames exist, so each frame of
+   * lookahead is 40 ms before the character makes a sound. Smaller is sooner and, past some point, looser-lipped —
+   * where that point sits depends on the pack.
+   *
+   * `mirrorPadding` folds back into the audio already received past the end of it, instead of feeding the encoder
+   * silence. Silence reads as a pause the speaker did not take and closes the mouth for it.
+   *
+   * Both are unset by default, which is how every pack was tuned. Measure before changing either.
+   */
+  lookaheadFrames?: number;
+  mirrorPadding?: boolean;
   onPhase?: (phase: YoobPhase) => void;
   onProgress?: (progress: YoobProgress) => void;
   onError?: (error: YoobError) => void;
@@ -461,7 +476,10 @@ export class YoobAvatar {
     };
     this.runtimeEvent = statusSink;
     await this.unlessStopped(coordinator.initialize(
-      { ...access, manifest, ortWasmUrl: `${this.cdnBase}/${ORT_WASM_PATH}` },
+      {
+        ...access, manifest, ortWasmUrl: `${this.cdnBase}/${ORT_WASM_PATH}`,
+        lookaheadFrames: this.options.lookaheadFrames, mirrorPadding: this.options.mirrorPadding,
+      },
       runtime.neuralMouthStride ?? 1,
       runtime.rendererInputType ?? "float32",
       runtime.rendererPreferredLayout ?? "NCHW",
