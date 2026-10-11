@@ -2,7 +2,7 @@
 
 Talking characters rendered in the browser with WebGPU. You give Yoob speech; it plays the audio and moves the face in
 sync, on the visitor's own GPU. Add a microphone and Yoob voice, and you have a live spoken conversation with barge-in,
-with no provider key. You can also bring your own OpenAI Realtime, Gemini Live or LiveKit agent.
+with no provider key. You can also bring your own OpenAI Realtime, GPT-Live, Gemini Live or LiveKit agent.
 
 - **Light.** About 20 KB gzipped to start. Rendering workers load when a character is created, and character files
   (37 MB) stream from `cdn.yoob.com` in verified chunks cached in the browser. On a good connection the character
@@ -247,6 +247,68 @@ microphone's 24 kHz audio to the 16 kHz Gemini expects, and plays Gemini's 24 kH
 audio-only sessions last up to 15 minutes. Gemini doesn't report when a user turn ends, so a spoken turn goes from
 `listening` straight to `speaking`. `thinking` appears after `greet` and `sendText`.
 
+## Talk with it: GPT-Live
+
+GPT-Live cannot be reached from a page on its own: it authenticates with an `Authorization` header, and a browser's
+WebSocket cannot set one. So the model takes an SDP offer instead. Your backend does the handshake with your OpenAI
+key and hands back only the answer, and the audio then travels between the browser and OpenAI directly — your server
+is not in the media path and neither is ours.
+
+```ts
+import { YoobWebRTCConversation } from "@yoob/avatar";
+
+const conversation = new YoobWebRTCConversation(avatar, {
+  getAnswer: (offer) =>
+    fetch("/gpt-live-answer", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sdp: offer }),
+    }).then((r) => r.json()),            // → { sdp }
+  onUserTranscript: (text) => (userCaption.textContent = text),
+  onAssistantTranscript: (text) => (lunaCaption.textContent = text),
+  onState: (state) => console.log(state), // connecting → listening → ended
+});
+
+talkButton.onclick = () => conversation.start();   // asks for the microphone, unlocks sound
+endButton.onclick = () => conversation.stop();
+```
+
+Your backend creates the session. The offer is the only thing the page sends, and the answer is the only thing it
+receives — per-session ICE and DTLS parameters, useless outside that one peer connection:
+
+```js
+// POST /gpt-live-answer  { sdp }  →  { sdp }
+const upstream = await fetch("https://api.openai.com/v1/live/sessions", {
+  method: "POST",
+  headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
+  body: JSON.stringify({
+    session: {
+      model: "gpt-live-1",
+      instructions: "You are Luna, a warm, curious companion.",
+      audio: { output: { voice: "marin" } },
+      // No audio.format: with WebRTC the codec is negotiated in SDP, and sending one is refused.
+    },
+    transport: { type: "webrtc", sdp },
+  }),
+});
+const { transport } = await upstream.json();       // 201
+res.json({ sdp: transport.sdp });                  // the session id stays on your server
+```
+
+Check the offer before forwarding it: cap it (40 kB is plenty) and refuse anything with a video section. The model is
+full-duplex and runs its own turn-taking — it listens while it speaks and yields on its own — so there is no barge-in
+to perform and no `greet` to send. The HTTP request itself starts the session; `session.start` is refused.
+
+`model`, `instructions` and `audio.output.voice` are fixed for the life of a session.
+
+The microphone is published with echo cancellation, which matters more here than anywhere else: the model hears
+itself through the speakers otherwise. Pass `microphone: false` to publish it yourself.
+
+**Billing.** Creating a session bills 15 seconds of voice up front, credited back once the session starts. A session
+that never connects still costs those 15 seconds, so open one when the user asks to talk, not on page load. Avatar
+minutes are metered by Yoob as usual from the moment the connection is live; pass `meter: false` only if you are
+metering elsewhere.
+
 ## LiveKit agents
 
 `@yoob/avatar/livekit` shows a [LiveKit](https://docs.livekit.io/agents/) voice agent as a Yoob character. The agent's
@@ -396,10 +458,16 @@ the conversation goes ahead — if the workspace has no credit, the key was revo
 | `la.yoob.com/api/v1/sessions/start` | The user starts talking | Session token |
 | `la.yoob.com/api/v1/sessions/end` | `conversation.stop()`, `destroy()` or page close | Session token |
 | `wss://voice.yoob.com/v1/realtime` | Yoob voice conversations | Voice token, microphone audio, typed text |
+| A peer connection to OpenAI | GPT-Live conversations | Microphone audio, the character's voice |
 
 With Yoob voice, microphone audio goes from the browser to `voice.yoob.com`, which relays it to OpenAI and meters the
 minutes. With your own OpenAI account, it goes directly from the browser to OpenAI, and with
 `YoobGeminiConversation` directly to Google. With `YoobLiveKitSession`, it goes to your LiveKit server, and the agent's audio comes back from it.
+
+`YoobWebRTCConversation` is the odd one: audio goes straight between the browser and OpenAI over WebRTC, so it
+reaches OpenAI's media addresses rather than any host of ours or yours. Only the SDP offer and answer pass through
+your backend. A network that blocks UDP will fall back to TCP on 443, and one that blocks both cannot use this
+transport.
 
 ## Security
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add `YoobWebRTCConversation`: GPT-Live over a direct peer connection. Your backend exchanges the SDP offer for an
+  answer with your OpenAI key, and audio then travels between the browser and OpenAI with no server in the middle.
+  Exported from the package root, since unlike the LiveKit entry it needs nothing but the browser's own WebRTC.
+- Add `avatar.attachMediaStream(stream, onAudio)`, the plain-WebRTC twin of `attachAudioTrack`.
+- Add `lookaheadFrames` and `mirrorPadding` to `YoobAvatarOptions`, for measuring a FeatherTalk pack against
+  something other than the lookahead it was tuned with. Both default to today's behaviour.
+
 ## 0.3.0
 
 - Add the `feathertalk-web` engine for the 13 October 7 avatar exports, including both 144 and 288 pixel inputs.
