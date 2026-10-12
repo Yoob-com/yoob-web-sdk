@@ -248,7 +248,11 @@ function lipPicture(identity) {
     "avatars20-r2-m05-lars-e19": [1.2, 0.44, 0.52, 0.55, 0.38, -20, 1.5],
     "avatars20-r2-f10-linda-e24": [1.2, 0.56, 0.34, 0.30, 0.38, 20, 1.5],
   };
-  const values = table[identity];
+  // retrain144 (2026-10-12): <name>-144-e<epoch> packs keep the face's lip picture (LipPicture.face(identity:) maps them the same way).
+  const retrained = /^([a-z]+)-144-e\d+$/.exec(identity);
+  const byName = { valentina: "avatars20-r2-f01-valentina-e24", leonie: "avatars20-r2-f04-leonie-e24", astrid: "astrid-exp-B350-e174",
+    santiago: "avatars20-r2-m01-santiago-e49", julien: "avatars20-r2-m03-julien-e24", lars: "avatars20-r2-m05-lars-e19", linda: "avatars20-r2-f10-linda-e24" };
+  const values = table[retrained ? byName[retrained[1]] : identity];
   if (!values) return null;
   const [sharpen, centerX, centerY, radiusX, radiusY, rotationDegrees, teeth] = values;
   return { sharpen, teeth, mouth: { centerX, centerY, radiusX, radiusY, rotationDegrees, softness } };
