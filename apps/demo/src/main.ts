@@ -22,14 +22,34 @@ async function post<T>(path: string, body: object): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+// ?character=<id> picks the character (luna-anime by default; the realistic FeatherTalk characters by name, for example
+// astrid). In development, ?pack=/packs/<id>/ loads a local FeatherTalk pack instead of the CDN (see vite.config.ts).
+const params = new URLSearchParams(location.search);
+const packUrl = params.get("pack") ?? undefined;
+const characterId = params.get("character") ?? packUrl?.split("/").filter(Boolean).pop() ?? "luna-anime";
+const NAMES: Record<string, string> = {
+  "luna-anime": "Luna", astrid: "Astrid", valentina: "Valentina", leonie: "Leonie", linda: "Linda", santiago: "Santiago",
+  julien: "Julien", lars: "Lars", lina: "Lina", zoe: "Zoe", maya: "Maya", ren: "Ren", kofi: "Kofi", bruno: "Bruno",
+};
+const displayName = NAMES[characterId] ?? characterId;
+const picker = $<HTMLSelectElement>("#character-picker");
+picker.replaceChildren(...Object.entries(NAMES).map(([id, name]) => new Option(name, id, false, id === characterId)));
+picker.addEventListener("change", () => {
+  const next = new URLSearchParams(location.search);
+  if (packUrl) next.set("pack", `/packs/${picker.value}/`); else next.set("character", picker.value);
+  location.search = next.toString();
+});
+document.title = `Yoob Web Demo · ${displayName}`;
+
 const support = await YoobAvatar.isSupported();
 if (!support.supported) {
   status.textContent = support.reason ?? "This browser can't render characters.";
 } else {
   const avatar = new YoobAvatar({
     container: $("#character"),
-    character: "luna-anime",
-    getCredentials: () => post<YoobCredentials>("/yoob-session", { character: "luna-anime" }),
+    character: characterId,
+    packUrl,
+    getCredentials: () => post<YoobCredentials>("/yoob-session", { character: characterId }),
     onProgress: ({ fraction }) => { progress.hidden = fraction >= 1; progress.value = fraction; },
     onPhase: (phase) => {
       const ready = phase === "ready" || phase === "speaking";
@@ -37,8 +57,8 @@ if (!support.supported) {
       speak.disabled = !ready;
       if (conversation.state === "idle" || conversation.state === "ended") {
         status.textContent = {
-          "not-prepared": "Starting…", downloading: "Downloading Luna…", warming: "Getting Luna ready…",
-          ready: "Ready. Press Talk to Luna.", speaking: "Speaking", failed: "Luna couldn't load.", stopped: "Session ended.",
+          "not-prepared": "Starting…", downloading: `Downloading ${displayName}…`, warming: `Getting ${displayName} ready…`,
+          ready: `Ready. Press Talk to ${displayName}.`, speaking: "Speaking", failed: `${displayName} couldn't load.`, stopped: "Session ended.",
         }[phase];
       }
     },
@@ -51,15 +71,15 @@ if (!support.supported) {
     // With your own OpenAI account instead (start the token server with OPENAI_API_KEY):
     // getClientSecret: async () => (await post<{ value: string }>("/openai-secret", {})).value,
     getVoiceSession: () => fetch("/yoob-voice", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ character: "luna-anime" }),
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ character: characterId }),
     }).then((r) => r.json()),
     greet: true,
     onState: (state) => {
-      talk.textContent = state === "idle" || state === "ended" ? "Talk to Luna" : "End";
+      talk.textContent = state === "idle" || state === "ended" ? `Talk to ${displayName}` : "End";
       mute.disabled = state === "idle" || state === "ended" || state === "connecting";
       status.textContent = {
         idle: status.textContent ?? "", connecting: "Connecting…", listening: "Listening — just speak",
-        thinking: "Thinking…", speaking: "Luna is speaking — talk to interrupt", ended: "Conversation ended.",
+        thinking: "Thinking…", speaking: `${displayName} is speaking — talk to interrupt`, ended: "Conversation ended.",
       }[state];
     },
     onUserTranscript: (text) => { userCaption.textContent = text; },

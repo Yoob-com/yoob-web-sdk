@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0
+
+The Luna app's realistic characters in the browser: Astrid, Valentina, Leonie, Linda, Santiago, Julien, Lars, Lina, Zoe,
+Maya, Ren, Kofi and Bruno (`character: "astrid"` and so on). No API break.
+
+- **New engine `feathertalk-web`**, a port of the app's FeatherTalk runtime: the FeatherHuBERT audio encoder and the
+  character's lip renderer (ONNX Runtime on WebGPU), the head path through the character's footage (silence and speech
+  lanes, crossings, stays), the silence seal and its ramp, speech blinks with the still idle face's pictures, the
+  articulation gain, the lip finish (sharpening, teeth and mouth matte) and the compose (area crops, Lanczos-4 paste,
+  8-pixel feather), all as the app computes them.
+- **Instant lips**, as on the app's direct calls: each lip frame is drawn as soon as one frame of audio past it has
+  arrived, the rest of its window stood in by the audio mirrored, and the voice plays 110 ms after it arrives without
+  waiting for the face. Frames are shown on the audible clock and cross-fade at the display's rate (`lipCadence`).
+- After a reply the head walks on to a pose like the still idle face's and hands over to it; between replies the still
+  face blinks.
+- The voice output is shared by both engines, so `unlockAudio()` and the microphone work before the character's engine
+  is known.
+- Development option `packUrl`: load a FeatherTalk pack from a URL without a session (never ship it).
+
 ## 0.3.0
 
 Smoother lips, from the Luna app's avatar work of 2026-09-24/25. No API break; the new option defaults to the app's

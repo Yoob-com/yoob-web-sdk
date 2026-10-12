@@ -1,6 +1,6 @@
 // scipy.signal.resample_poly(x, 2, 3), Kaiser(beta=5), copied from the validated
 // native 24 kHz TTS-to-avatar resampling implementation.
-const FILTER = new Float32Array([
+export const RESAMPLE_FILTER = new Float32Array([
   0, 0, 0, -9.546140932e-19, -0.001015151618, -0.001434323029,
   2.47261904e-18, 0.002551661804, 0.003272651462, -4.659273471e-18,
   -0.005103380419, -0.006242331583, 7.47593099e-18, 0.009052845649,
@@ -26,10 +26,10 @@ export function resample24kTo16k(input: Float32Array): Float32Array {
   const preRemove = 11;
   for (let j = 0; j < outputCount; j += 1) {
     const time = (j + preRemove) * 3;
-    const first = Math.max(0, Math.ceil((time - (FILTER.length - 1)) / 2));
+    const first = Math.max(0, Math.ceil((time - (RESAMPLE_FILTER.length - 1)) / 2));
     const last = Math.min(input.length - 1, Math.floor(time / 2));
     let sum = 0;
-    for (let k = first; k <= last; k += 1) sum += FILTER[time - k * 2] * input[k];
+    for (let k = first; k <= last; k += 1) sum += RESAMPLE_FILTER[time - k * 2] * input[k];
     output[j] = sum;
   }
   return output;

@@ -385,6 +385,13 @@ export class ConversationAudio {
     return this.micPacketSequence !== sequence;
   }
 
+  /** Seconds from the playback worklet to the speaker (output and base latency), 0 before playback is set up. */
+  get outputLatencySeconds(): number {
+    const context = this.context;
+    if (!context) return 0;
+    return (Number.isFinite(context.outputLatency) ? context.outputLatency : 0) + (Number.isFinite(context.baseLatency) ? context.baseLatency : 0);
+  }
+
   load(pcm: Int16Array, epoch: number): void {
     if (!this.playback) throw new Error("audio is not initialized");
     const samples = new Float32Array(pcm.length);
