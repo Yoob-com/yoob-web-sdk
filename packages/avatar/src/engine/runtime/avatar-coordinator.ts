@@ -1,3 +1,4 @@
+import { isFeatherTalk } from '../../cdn';
 import { ConversationAudio } from '../audio/conversation-audio';
 import { RenderCoordinator, type RenderCoordinatorCallbacks } from './render-coordinator';
 import { FeatherCoordinator } from '../../feathertalk/coordinator';
@@ -9,7 +10,7 @@ export class AvatarCoordinator {
   constructor(private canvas:HTMLCanvasElement,private video:HTMLVideoElement,private callbacks:RenderCoordinatorCallbacks){}
   async initialize(...args:Parameters<RenderCoordinator['initialize']>):Promise<void>{
     if(this.renderer)throw new Error('Renderer already initialized');
-    if(args[0].manifest.engine==='feathertalk-web'){
+    if(isFeatherTalk(args[0].manifest.engine)){
       this.renderer=new FeatherCoordinator(this.canvas,this.video,this.callbacks,this.audio);
       await this.renderer.initialize(args[0]);
     }else{

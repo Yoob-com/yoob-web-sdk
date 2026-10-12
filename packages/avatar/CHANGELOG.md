@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- Accepts `realistic-web` as well as `feathertalk-web`: the same renderer, republished under a name that says what it
+  draws rather than how.
+- Takes the models' tensor names from the pack instead of assuming them. A re-export renamed the renderer's output
+  from `clip_0` to `output`, which nothing in the pack layout showed — the character downloaded perfectly and then
+  rendered nothing. A pack that names none keeps the old names.
+
 ## 0.4.0
 
 - Reads the second FeatherTalk pack layout alongside the first, chosen by `runtime.pack` on the signed manifest. Host

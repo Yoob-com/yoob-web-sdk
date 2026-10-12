@@ -38,7 +38,8 @@ function packV2() {
     format:'feathertalk-web',schema:1,id:'kofi',
     audio:{sampleRate:16000,fps:25,waveformMean:0.00007622,waveformStd:0.068032},
     geometry:{inner:288,output:576,outer:608,hole:{x:8,y:8,width:270,height:260},featherPixels:8,channelOrder:'BGR'},
-    models:{encoder:{file:'encoder.onnx'},renderer:{file:'renderer.onnx'},closedAudio:'closed_audio.f32'},
+    models:{encoder:{file:'encoder.onnx',input:'audio',output:'hidden'},
+      renderer:{file:'renderer.onnx',image:'image',audio:'audio',output:'output'},closedAudio:'closed_audio.f32'},
     hosts:{width:1080,height:1920,count:2,boxes:[[347,599,697,949],[347,600,697,950]] as Array<[number,number,number,number]>,
       videos:[{file:'hosts.mp4',codec:'hvc1.1.6.L120.90',description:'AQ==',keyframeInterval:15,
         frames:[[44,109796],[109840,57975]] as Array<[number,number]>}]},
@@ -59,6 +60,17 @@ test('the second pack layout reads into the same contract the engine already spe
   // No bank ships with this layout; the crops come from the video.
   assert.equal(p.innerBank,'');assert.equal(p.frames[0].host,'');
   assert.equal(v2.instantLips?.lookaheadFrames,1);assert.equal(v2.face?.voice,'echo');
+  // The renderer's output was renamed from clip_0 to output in a re-export, so the names come from the pack.
+  assert.equal(p.tensors?.rendererOutput,'output');assert.equal(p.tensors?.encoderOutput,'hidden');
+});
+test('a pack that names no tensors keeps the names the first layout has always used',()=>{
+  const bare=packV2();
+  bare.models={encoder:{file:'encoder.onnx'},renderer:{file:'renderer.onnx'}} as typeof bare.models;
+  const {pack:p}=readPackV2(bare);
+  assert.equal(p.tensors?.rendererOutput,'clip_0');assert.equal(p.tensors?.rendererImage,'image');
+});
+test('either engine name reads, since the same renderer was republished under a new one',()=>{
+  assert.equal(readPackV2({...packV2(),format:'realistic-web'}).pack.innerSize,288);
 });
 test('the second layout refuses a pack whose host tables disagree',()=>{
   assert.throws(()=>readPackV2({...packV2(),format:'something-else'}));

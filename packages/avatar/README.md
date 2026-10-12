@@ -392,7 +392,7 @@ The signed manifest chooses the engine automatically; conversation and metering 
 These packs use their own shared encoder and cannot use Luna's distilled encoder.
 A forward/backward host sequence runs during speech, against the pack's neutral host as the reference.
 
-There are two pack layouts and SDK 0.4.0 reads both, choosing by whether the signed manifest names an index file
+There are two pack layouts and SDK 0.5.0 reads both, choosing by whether the signed manifest names an index file
 (`runtime.pack`). The original ships one JPEG per host frame — loaded as speech advances, up to eight at a time — with
 a prebuilt bank of mouth crops and a looping idle video. The second ships the host frames as video and no bank: the
 frames are decoded with WebCodecs from the byte ranges the pack lists, and each mouth crop is cut from its frame, so

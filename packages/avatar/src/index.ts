@@ -1,6 +1,7 @@
 import {
   ChunkStore, SDK_VERSION, YoobError, clearChunkCache, fetchManifest,
   type CharacterManifest,
+  isFeatherTalk,
 } from "./cdn";
 import type { RemoteAudioTrack } from "./engine/audio/conversation-audio";
 import { AvatarCoordinator } from "./engine/runtime/avatar-coordinator";
@@ -461,7 +462,7 @@ export class YoobAvatar {
     this.manifestValue = manifest;
     this.root.setAttribute("aria-label", manifest.displayName);
     const runtime = manifest.runtime;
-    if (!runtime || !["anime-web", "feathertalk-web"].includes(manifest.engine)) {
+    if (!runtime || !(manifest.engine === "anime-web" || isFeatherTalk(manifest.engine))) {
       throw new YoobError("unsupported", `${manifest.character} has no web renderer in this SDK version.`);
     }
 
@@ -475,7 +476,7 @@ export class YoobAvatar {
     if (!videoFile && !this.options.idleVideoUrl && !manifest.runtime?.pack) {
       throw new YoobError("invalid-assets", "The character has no idle video.");
     }
-    const runtimeFiles = manifest.engine === "feathertalk-web"
+    const runtimeFiles = isFeatherTalk(manifest.engine)
       ? manifest.files.filter((file) => prepared(file.path, manifest))
       : manifest.files;
     const preparedFiles = this.options.idleVideoUrl

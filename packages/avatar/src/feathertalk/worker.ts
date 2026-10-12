@@ -1,13 +1,15 @@
 import { ChunkStore, type CdnAccess, type CharacterManifest } from '../cdn';
 import { createSession, ort, setOrtWasmUrl } from '../engine/inference/ort-runtime';
 import { PcmResampler } from '../resampler';
-import { audioInput, hostIndex, imageInput, validatePack, type FeatherPack } from './contract';
+import { audioInput, DEFAULT_TENSORS, hostIndex, imageInput, validatePack, type FeatherPack, type FeatherTensors } from './contract';
 import { JpegHosts, VideoHosts, type HostFrames } from './hosts';
 import { readPackV2 } from './pack-v2';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 let access: CdnAccess, store: ChunkStore, pack: FeatherPack;
 let frames: HostFrames, referenceCrop: Uint8Array;
+/** What this character's graphs call their tensors. The first layout's names are fixed; the second states its own. */
+let tensors: FeatherTensors = DEFAULT_TENSORS;
 let encoder: ort.InferenceSession, renderer: ort.InferenceSession;
 let epoch=0, pcm=new Int16Array(0), samples16=new Int16Array(0), final=false, nextFrame=0, busy=false, requested=false;
 let resampler=new PcmResampler(24000,16000);
@@ -63,6 +65,7 @@ async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortW
   // The caller's override wins over the pack, so a page can still measure one setting against another.
   if(Number.isInteger(config.lookaheadFrames)&&config.lookaheadFrames!>=0)lookahead=config.lookaheadFrames!;
   // The neutral pose every frame is rendered against. Fetched once and held: it is read on every single frame.
+  tensors=pack.tensors??DEFAULT_TENSORS;
   referenceCrop=new Uint8Array(await frames.crop(pack.referenceFrame));
   encoder=await createSession(new Uint8Array(await load(pack.encoder)),['wasm'],'FeatherTalk encoder');
   renderer=await createSession(new Uint8Array(await load(pack.renderer)),['webgpu','wasm'],'FeatherTalk renderer');
@@ -72,13 +75,15 @@ async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortW
   if(!context||!patchContext)throw new Error('Offscreen Canvas2D unavailable');
   // Validate both model graphs on the actual backend before declaring the avatar ready.
   const input=new ort.Tensor('float32',new Float32Array(12880),[1,12880]);
-  const warm=await encoder.run({audio:input});input.dispose();
-  if(warm.hidden?.dims.at(-1)!==1024)throw new Error('FeatherTalk encoder output mismatch');
+  const warm=await encoder.run({[tensors.encoderInput]:input});input.dispose();
+  if(warm[tensors.encoderOutput]?.dims.at(-1)!==1024)throw new Error('FeatherTalk encoder output mismatch');
   Object.values(warm).forEach(t=>t.dispose());
   const image=new ort.Tensor('float32',imageInput(referenceCrop,referenceCrop,pack),[1,6,pack.innerSize,pack.innerSize]);
   const audio=new ort.Tensor('float32',new Float32Array(40*1024),[1,40,1024]);
-  const result=await renderer.run({image,audio});image.dispose();audio.dispose();
-  if(result.clip_0?.dims.join(',')!==`1,3,${pack.outputSize},${pack.outputSize}`)throw new Error('FeatherTalk renderer output mismatch');
+  const result=await renderer.run({[tensors.rendererImage]:image,[tensors.rendererAudio]:audio});image.dispose();audio.dispose();
+  // Named by the pack rather than assumed: a re-export renamed this tensor once already, and the failure that caused
+  // was a character that downloaded perfectly and then rendered nothing.
+  if(result[tensors.rendererOutput]?.dims.join(',')!==`1,3,${pack.outputSize},${pack.outputSize}`)throw new Error('FeatherTalk renderer output mismatch');
   Object.values(result).forEach(t=>t.dispose());post({type:'ready'});
 }
 async function render(requestEpoch:number) {
@@ -107,9 +112,10 @@ async function render(requestEpoch:number) {
       wave[i]=(sample/32768-pack.waveformMean)/pack.waveformStd;
     }
     const tensor=new ort.Tensor('float32',wave,[1,wave.length]);
-    const encoded=await encoder.run({audio:tensor});tensor.dispose();
+    const encoded=await encoder.run({[tensors.encoderInput]:tensor});tensor.dispose();
     try {
-      const hidden=encoded.hidden.data as Float32Array, tokens=encoded.hidden.dims[1];
+      const out=encoded[tensors.encoderOutput];
+      const hidden=out.data as Float32Array, tokens=out.dims[1];
       for(let frame=nextFrame;frame<end;frame++) {
         if(epoch!==requestEpoch)return;
         const index=hostIndex(frame,pack.frames.length), hostImage=await frames.picture(index);
@@ -118,9 +124,9 @@ async function render(requestEpoch:number) {
         if(pack.innerSize===144 || frame%2===0 || !lastPixels){
           const image=new ort.Tensor('float32',imageInput(referenceCrop,await frames.crop(index),pack),[1,6,pack.innerSize,pack.innerSize]);
           const audio=new ort.Tensor('float32',audioInput(hidden,tokens,frame,start),[1,40,1024]);
-          const result=await renderer.run({image,audio});image.dispose();audio.dispose();
+          const result=await renderer.run({[tensors.rendererImage]:image,[tensors.rendererAudio]:audio});image.dispose();audio.dispose();
           try {
-            const output=result.clip_0.data as Float32Array, size=pack.outputSize, plane=size*size;
+            const output=result[tensors.rendererOutput].data as Float32Array, size=pack.outputSize, plane=size*size;
             const pixels=new Uint8ClampedArray(plane*4);
             for(let i=0;i<plane;i++) {
               const x=i%size,y=Math.floor(i/size);

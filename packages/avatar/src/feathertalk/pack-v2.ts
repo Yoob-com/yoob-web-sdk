@@ -1,4 +1,5 @@
-import type { FeatherPack } from './contract';
+import { isFeatherTalk } from '../cdn';
+import { DEFAULT_TENSORS, type FeatherPack } from './contract';
 
 /**
  * The second FeatherTalk pack layout, `pack.json`, named by the manifest's `runtime.pack`.
@@ -21,7 +22,11 @@ export interface PackV2 {
     hole: { x: number; y: number; width: number; height: number };
     featherPixels: number; channelOrder: string;
   };
-  models: { encoder: { file: string }; renderer: { file: string }; closedAudio?: string };
+  models: {
+    encoder: { file: string; input?: string; output?: string };
+    renderer: { file: string; image?: string; audio?: string; output?: string };
+    closedAudio?: string;
+  };
   hosts: {
     width: number; height: number; count: number;
     boxes: Array<[number, number, number, number]>;
@@ -62,7 +67,7 @@ const positive = (value: unknown): value is number => typeof value === 'number' 
  */
 export function readPackV2(raw: unknown): { pack: FeatherPack; v2: PackV2 } {
   const v2 = raw as PackV2;
-  if (v2?.format !== 'feathertalk-web' || v2.schema !== 1) {
+  if (!isFeatherTalk(v2?.format) || v2.schema !== 1) {
     throw new Error('Unsupported FeatherTalk pack contract');
   }
   const { audio, geometry: g, hosts, models } = v2;
@@ -77,6 +82,13 @@ export function readPackV2(raw: unknown): { pack: FeatherPack; v2: PackV2 } {
   }
 
   const pack: FeatherPack = {
+    tensors: {
+      encoderInput: models.encoder.input ?? DEFAULT_TENSORS.encoderInput,
+      encoderOutput: models.encoder.output ?? DEFAULT_TENSORS.encoderOutput,
+      rendererImage: models.renderer.image ?? DEFAULT_TENSORS.rendererImage,
+      rendererAudio: models.renderer.audio ?? DEFAULT_TENSORS.rendererAudio,
+      rendererOutput: models.renderer.output ?? DEFAULT_TENSORS.rendererOutput,
+    },
     fps: audio.fps,
     sampleRate: audio.sampleRate,
     innerSize: g.inner,

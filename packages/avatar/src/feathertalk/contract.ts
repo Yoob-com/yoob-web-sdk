@@ -2,7 +2,24 @@ export interface FeatherFrame {
   bbox: [number, number, number, number];
   width: number; height: number; host: string;
 }
+/**
+ * What the two ONNX graphs call their inputs and outputs.
+ *
+ * Hardcoded until a republished pack renamed the renderer's output from `clip_0` to `output` — which is a different
+ * model file, not a different format, and nothing in the pack layout showed it. The second layout states these names,
+ * so a re-export can rename a tensor without needing another SDK.
+ */
+export interface FeatherTensors {
+  encoderInput: string; encoderOutput: string;
+  rendererImage: string; rendererAudio: string; rendererOutput: string;
+}
+/** What the first layout's models have always been called. */
+export const DEFAULT_TENSORS: FeatherTensors = {
+  encoderInput: 'audio', encoderOutput: 'hidden',
+  rendererImage: 'image', rendererAudio: 'audio', rendererOutput: 'clip_0',
+};
 export interface FeatherPack {
+  tensors?: FeatherTensors;
   fps: number; sampleRate: number; innerSize: number; outerSize: number; outputSize: number;
   width: number; height: number; waveformMean: number; waveformStd: number;
   hole: { x: number; y: number; width: number; height: number };

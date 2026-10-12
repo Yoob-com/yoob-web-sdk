@@ -65,7 +65,16 @@ export class YoobError extends Error {
   }
 }
 
-export const SDK_VERSION = "0.4.0";
+export const SDK_VERSION = "0.5.0";
+
+/**
+ * The engine ids that mean the same renderer.
+ *
+ * It was published as `feathertalk-web` and republished as `realistic-web` on 2026-10-12 — the same models and the
+ * same pipeline under a name that says what it draws rather than how. Both are served, so both are accepted.
+ */
+export const FEATHERTALK_ENGINES = ["feathertalk-web", "realistic-web"];
+export const isFeatherTalk = (engine: string): boolean => FEATHERTALK_ENGINES.includes(engine);
 
 /** Public keys whose manifest signatures the SDK accepts, by key id. */
 const SIGNING_KEYS: Record<string, string> = {
