@@ -41,4 +41,6 @@ replaces it. If it says you are not a member, make your organization membership 
 
 ## License
 
-Apache-2.0. Character model files are licensed separately and are not in this repository.
+The code is Apache-2.0 (`LICENSE`). Character model files (weights, footage and everything else in a character pack)
+are not in this repository and are licensed under the [Yoob Model License](LICENSE-MODELS.md): use them only through
+the SDK in metered Yoob sessions; no extraction, redistribution or reverse engineering. Packs are marked per workspace.

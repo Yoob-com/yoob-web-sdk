@@ -13,7 +13,8 @@
 //
 // Settings:
 //   YOOB_API_KEY                   required. A yoob_test_ key opens sandbox sessions; a yoob_live_ key bills credits.
-//   YOOB_CHARACTERS                characters this server hands out, comma-separated (default luna-realistic,luna-anime)
+//   YOOB_CHARACTERS                characters this server hands out, comma-separated (default luna-anime,astrid: the
+//                                  characters test keys may open; a live key may list any character it is allowed)
 //   YOOB_EXAMPLE_ALLOW_ANONYMOUS   1 lets anyone mint sessions. Local development only.
 //   YOOB_RATE_LIMIT                sessions per user per minute, across all routes (default 10)
 //   PORT                           default 3100. The server listens on 127.0.0.1 only.
@@ -31,7 +32,7 @@ const apiBase = process.env.YOOB_API_BASE ?? "https://api2.yoob.com";
 const port = Number(process.env.PORT ?? 3100);
 const allowAnonymous = process.env.YOOB_EXAMPLE_ALLOW_ANONYMOUS === "1";
 const allowedCharacters = new Set(
-  (process.env.YOOB_CHARACTERS || "luna-realistic,luna-anime").split(",").map((id) => id.trim()).filter(Boolean),
+  (process.env.YOOB_CHARACTERS || "luna-anime,astrid").split(",").map((id) => id.trim()).filter(Boolean),
 );
 const perMinute = Math.max(1, Number(process.env.YOOB_RATE_LIMIT || 10) || 10);
 if (!apiKey) throw new Error("Set YOOB_API_KEY, or run `npm run dev-key` if you are a Yoob-com contributor");
@@ -122,12 +123,12 @@ const routes = {
     rateLimit(await requireUser(req));
     const character = requireCharacter(await readJson(req));
     const voice = VOICES[character];
-    // Voice sessions always carry the character's own prompt, so the app can't turn the voice into something else.
-    if (!voice?.instructions) throw new HttpError(400, `No voice is configured for ${character}.`);
+    // Voice sessions always carry the character's own prompt, so the app can't turn the voice into something else: this
+    // server's prompt when it has one, otherwise the Yoob API's server-side preset for the character (VOICE_CHARACTERS).
     // The voice token must be used within 5 minutes and opens one conversation: mint it when the user taps Talk.
-    return forward(res, await yoob("/api/v1/voice/sessions", {
-      voice: voice.voice, instructions: voice.instructions, max_seconds: 900,
-    }));
+    return forward(res, await yoob("/api/v1/voice/sessions", voice?.instructions
+      ? { voice: voice.voice, instructions: voice.instructions, max_seconds: 900 }
+      : { character, max_seconds: 900 }));
   },
   async "/openai-secret"(req, res) {
     if (!process.env.OPENAI_API_KEY) throw new HttpError(501, "Set OPENAI_API_KEY to enable conversations.");
