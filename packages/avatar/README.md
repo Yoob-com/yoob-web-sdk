@@ -390,9 +390,18 @@ different packs and are not served to SDK keys, so a session naming one is refus
 backend's `characters` list. The faces are the same, at twice the resolution.
 The signed manifest chooses the engine automatically; conversation and metering APIs are unchanged.
 These packs use their own shared encoder and cannot use Luna's distilled encoder.
-Host JPEGs load as speech advances, with up to eight fetched concurrently; model and crop banks load during preparation.
-The first version uses host frame zero as the reference, a forward/backward host sequence during speech,
-and a forward looping video when idle. It does not reproduce the iOS pose-selection or still-blink controllers.
+A forward/backward host sequence runs during speech, against the pack's neutral host as the reference.
+
+There are two pack layouts and SDK 0.4.0 reads both, choosing by whether the signed manifest names an index file
+(`runtime.pack`). The original ships one JPEG per host frame — loaded as speech advances, up to eight at a time — with
+a prebuilt bank of mouth crops and a looping idle video. The second ships the host frames as video and no bank: the
+frames are decoded with WebCodecs from the byte ranges the pack lists, and each mouth crop is cut from its frame, so
+there is nothing to keep in step between the two. **A browser without WebCodecs cannot play a second-layout
+character**; every current browser has it, and the SDK says so plainly rather than failing later.
+
+A second-layout pack also states its own lip timing (`instantLips`) and the voice the face is meant to speak in
+(`face.voice`), and ships a still rather than an idle loop — pass `idleVideoUrl` to show motion while it rests.
+Neither layout reproduces the iOS pose-selection or still-blink controllers yet.
 Per-frame inference and download speed determine whether playback can sustain real time on a given device.
 
 | Id | Style | Download |

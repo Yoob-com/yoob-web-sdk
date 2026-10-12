@@ -11,6 +11,8 @@ export class FeatherCoordinator {
   private streaming=false; private started=false; private inFlight=false; private complete=false;
   private destroyed=false; private timer=0; private animation=0;
   private readyResolve?:()=>void; private readyReject?:(error:Error)=>void;
+  /** How long the voice waits for the mouth, in samples at 24 kHz. Stated by the pack; zero when it states none. */
+  private voiceDelaySamples=0;
   private initTimer?:ReturnType<typeof setTimeout>;
   constructor(private canvas:HTMLCanvasElement,private video:HTMLVideoElement,
     private callbacks:RenderCoordinatorCallbacks,readonly audio:ConversationAudio) {
@@ -56,7 +58,10 @@ export class FeatherCoordinator {
     if(this.started||!this.streaming)return;
     // Keep a 400 ms PCM cushion so LiveKit jitter does not empty the worklet
     // right after playback begins. Short finalized replies use what they have.
-    if(this.queuedSamples<9600&&!this.finalReceived)return;
+    //
+    // A pack that asks the voice to wait for the mouth adds to that cushion rather than replacing it: both are
+    // reasons to hold the first sample back, and the longer one governs.
+    if(this.queuedSamples<Math.max(9600,this.voiceDelaySamples)&&!this.finalReceived)return;
     if(this.received<8&&!(this.finalReceived&&this.received>0))return;
     this.started=true;this.video.pause();
     void this.audio.start(this.epoch).catch(e=>this.fail(String(e)));
@@ -69,6 +74,9 @@ export class FeatherCoordinator {
     if(this.destroyed){data.bitmap?.close();return;}
     if(data.type==='ready'){
       clearTimeout(this.initTimer);this.readyResolve?.();this.readyResolve=undefined;this.readyReject=undefined;return;
+    }
+    if(data.type==='voiceDelay'){
+      this.voiceDelaySamples=Math.max(0,Math.round(data.ms*24));return;
     }
     if(data.type==='progress'){
       this.callbacks.onRuntimeEvent?.({type:'status',loadedBytes:data.loadedBytes} as Parameters<NonNullable<RenderCoordinatorCallbacks['onRuntimeEvent']>>[0]);return;

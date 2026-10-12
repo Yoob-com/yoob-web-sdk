@@ -146,6 +146,20 @@ const SAMPLE_RATE = 24_000;
  * A talking character in the page. Create it, call `prepare()`, then pass speech to `speak()`.
  * The avatar plays the audio itself so the lips stay in sync.
  */
+/**
+ * Whether a FeatherTalk file is part of `prepare()`, so progress counts what is actually about to be downloaded.
+ *
+ * The first layout fetches its host JPEGs as the conversation advances, so they are not prepare-time bytes. The second
+ * fetches one host video up front but publishes two encodings of it and only ever uses one — the smaller, where the
+ * browser can decode it — so counting both would leave the bar short of the end on every character.
+ */
+export function prepared(path: string, manifest: CharacterManifest): boolean {
+  if (path.startsWith("hosts/") || path === "closed_audio.f32" || path === "provenance.json") return false;
+  if (!path.startsWith("hosts.")) return true;
+  const videos = manifest.files.filter((file) => file.path.startsWith("hosts."));
+  return path === videos.reduce((small, file) => (file.size < small.size ? file : small), videos[0]).path;
+}
+
 export class YoobAvatar {
   private phaseValue: YoobPhase = "not-prepared";
   private readonly root: HTMLDivElement;
@@ -167,6 +181,8 @@ export class YoobAvatar {
   private metering?: Promise<void>;
   private stopListeners: Array<(error: YoobError) => void> = [];
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
+  /** The resting picture for a character that ships no idle loop; drawn once, then left alone. */
+  private still?: ImageBitmap;
   /** The user's microphone: device choice, mute, level and audio packets. */
   readonly microphone = new YoobMicrophone(() => this.engine().audio);
 
@@ -450,14 +466,17 @@ export class YoobAvatar {
     }
 
     const store = new ChunkStore(access, manifest);
-    const videoFile = manifest.files.find((file) => file.tier === 1 && file.path.endsWith(".mp4"));
-    if (!videoFile && !this.options.idleVideoUrl) {
+    // The host video of a second-layout pack is also an .mp4, so the idle loop is matched by name rather than by
+    // being the first one in the list — picking the hosts by accident would loop the character through every pose.
+    const videoFile = manifest.files.find(
+      (file) => file.tier === 1 && file.path.endsWith(".mp4") && !file.path.startsWith("hosts."),
+    );
+    // A second-layout pack ships no idle loop: its idle is the still, which is the poster this already downloads.
+    if (!videoFile && !this.options.idleVideoUrl && !manifest.runtime?.pack) {
       throw new YoobError("invalid-assets", "The character has no idle video.");
     }
-    // FeatherTalk host images are fetched as the conversation advances; they are not part of prepare().
     const runtimeFiles = manifest.engine === "feathertalk-web"
-      ? manifest.files.filter((file) => !file.path.startsWith("hosts/")
-        && file.path !== "closed_audio.f32" && file.path !== "provenance.json")
+      ? manifest.files.filter((file) => prepared(file.path, manifest))
       : manifest.files;
     const preparedFiles = this.options.idleVideoUrl
       ? runtimeFiles.filter((file) => file.path !== videoFile?.path)
@@ -474,11 +493,15 @@ export class YoobAvatar {
     this.poster.src = this.objectUrl(poster, "image/jpeg");
     if (this.options.idleVideoUrl) {
       this.video.src = this.options.idleVideoUrl;
-    } else {
-      const video = await store.bytes(videoFile!.path, count);
+      this.video.load();
+    } else if (videoFile) {
+      const video = await store.bytes(videoFile.path, count);
       this.video.src = this.objectUrl(video, "video/mp4");
+      this.video.load();
+    } else {
+      // No loop to play: the character rests on its still until it speaks.
+      this.still = await createImageBitmap(new Blob([poster], { type: "image/jpeg" })).catch(() => undefined);
     }
-    this.video.load();
     // The worker downloads the rest; count everything else as it lands.
     const workerBytes = total - completed;
     const coordinator = this.engine();
@@ -503,6 +526,11 @@ export class YoobAvatar {
       runtime.rendererTemporalContract as RendererTemporalContract | undefined,
     ));
     this.options.onProgress?.({ completedBytes: total, totalBytes: total, fraction: 1 });
+    // Painted after initialize, which sizes the canvas and so clears it. The render loop draws neither speech frames
+    // nor an idle video while the character is resting, so this stays until it speaks.
+    if (this.still) {
+      this.canvas.getContext("2d")?.drawImage(this.still, 0, 0, this.canvas.width, this.canvas.height);
+    }
     this.canvas.style.opacity = "1";
     if (!this.monitor?.active) throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
     this.setPhase("ready");

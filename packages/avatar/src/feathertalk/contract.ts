@@ -30,17 +30,32 @@ export function hostIndex(frame: number, count: number): number {
   const x = frame % (2 * count - 2);
   return x < count ? x : 2 * count - 2 - x;
 }
-/** ONNX inputs are planar float32 BGR, even when its internal weights are FP16. */
-export function imageInput(bank: Uint8Array, host: number, p: FeatherPack): Float32Array {
-  const size = p.innerSize, plane = size * size, stride = plane * 3;
+/** The bytes of one inner crop: `innerSize * innerSize * 3`, BGR interleaved, as the bank stores them. */
+export const cropStride = (p: FeatherPack): number => p.innerSize * p.innerSize * 3;
+/**
+ * One crop out of the prebuilt bank.
+ *
+ * Only the old layout has a bank; the new one derives the same bytes from the host video frame, which is why the
+ * tensor below takes crops rather than a bank and an index.
+ */
+export function bankCrop(bank: Uint8Array, host: number, p: FeatherPack): Uint8Array {
+  const stride = cropStride(p);
   if (bank.length !== p.frames.length * stride) throw new Error('FeatherTalk crop bank length mismatch');
+  return bank.subarray(host * stride, (host + 1) * stride);
+}
+/** ONNX inputs are planar float32 BGR, even when its internal weights are FP16. */
+export function imageInput(reference: Uint8Array, current: Uint8Array, p: FeatherPack): Float32Array {
+  const size = p.innerSize, plane = size * size;
+  if (reference.length !== plane * 3 || current.length !== plane * 3) {
+    throw new Error('FeatherTalk crop length mismatch');
+  }
   const out = new Float32Array(plane * 6);
   for (let i=0;i<plane;i++) {
     const x=i%size, y=Math.floor(i/size), h=p.hole;
     const hole=x>=h.x && x<h.x+h.width && y>=h.y && y<h.y+h.height;
     for (let c=0;c<3;c++) {
-      out[c*plane+i]=bank[p.referenceFrame*stride+i*3+c]/255;
-      out[(c+3)*plane+i]=hole?0:bank[host*stride+i*3+c]/255;
+      out[c*plane+i]=reference[i*3+c]/255;
+      out[(c+3)*plane+i]=hole?0:current[i*3+c]/255;
     }
   }
   return out;

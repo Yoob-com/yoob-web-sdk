@@ -2,9 +2,12 @@ import { ChunkStore, type CdnAccess, type CharacterManifest } from '../cdn';
 import { createSession, ort, setOrtWasmUrl } from '../engine/inference/ort-runtime';
 import { PcmResampler } from '../resampler';
 import { audioInput, hostIndex, imageInput, validatePack, type FeatherPack } from './contract';
+import { JpegHosts, VideoHosts, type HostFrames } from './hosts';
+import { readPackV2 } from './pack-v2';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
-let access: CdnAccess, store: ChunkStore, pack: FeatherPack, bank: Uint8Array;
+let access: CdnAccess, store: ChunkStore, pack: FeatherPack;
+let frames: HostFrames, referenceCrop: Uint8Array;
 let encoder: ort.InferenceSession, renderer: ort.InferenceSession;
 let epoch=0, pcm=new Int16Array(0), samples16=new Int16Array(0), final=false, nextFrame=0, busy=false, requested=false;
 let resampler=new PcmResampler(24000,16000);
@@ -28,20 +31,39 @@ let mirrorPadding=false;
 let canvas: OffscreenCanvas, context: OffscreenCanvasRenderingContext2D;
 let patch: OffscreenCanvas, patchContext: OffscreenCanvasRenderingContext2D;
 let lastPixels: Uint8ClampedArray<ArrayBuffer> | undefined;
-const hosts=new Map<number,ImageBitmap>();
 const post=(message: unknown, transfer: Transferable[]=[])=>scope.postMessage(message,transfer);
 function append(a: Int16Array, b: Int16Array): Int16Array<ArrayBuffer> {
   const result=new Int16Array(a.length+b.length); result.set(a);result.set(b,a.length);return result;
 }
 async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortWasmUrl:string; lookaheadFrames?:number; mirrorPadding?:boolean}) {
   access=config; store=new ChunkStore(access,config.manifest);setOrtWasmUrl(config.ortWasmUrl);
-  if(Number.isInteger(config.lookaheadFrames)&&config.lookaheadFrames!>=0)lookahead=config.lookaheadFrames!;
   mirrorPadding=config.mirrorPadding===true;
   let loadedBytes=0;
   const load=(path:string)=>store.bytes(path,n=>post({type:'progress',loadedBytes:loadedBytes+=n}));
-  pack=JSON.parse(new TextDecoder().decode(await load('feathertalk.json')));validatePack(pack);
-  bank=new Uint8Array(await load(pack.innerBank));
-  imageInput(bank,0,pack); // validate the complete bank before starting inference
+  // Which layout this character ships. The manifest names its index file; a manifest that names none is the original
+  // layout, whose index has always been called `feathertalk.json`.
+  const packPath=config.manifest.runtime?.pack;
+  const raw=JSON.parse(new TextDecoder().decode(await load(packPath ?? 'feathertalk.json')));
+  if(packPath){
+    const read=readPackV2(raw);
+    pack=read.pack;validatePack(pack);
+    // The pack's own timing, when it states one. These packs are built for a short lookahead and a mirrored stand-in;
+    // the older ones were tuned against nine frames, which is why the default stays where it is.
+    const lips=read.v2.instantLips;
+    if(Number.isInteger(lips?.lookaheadFrames)&&lips!.lookaheadFrames!>=0)lookahead=lips!.lookaheadFrames!;
+    if(lips?.standIn==='mirror')mirrorPadding=true;
+    // How long the voice waits for the mouth. The page holds playback back by this much so the first word is never
+    // ahead of the first lip frame; the pack states it because it depends on how the pack was built.
+    if(Number.isFinite(lips?.voiceDelayMilliseconds))post({type:'voiceDelay',ms:lips!.voiceDelayMilliseconds});
+    frames=await VideoHosts.open(pack,read.v2,load);
+  } else {
+    pack=raw as FeatherPack;validatePack(pack);
+    frames=new JpegHosts(pack,new Uint8Array(await load(pack.innerBank)),load,(path)=>store.release(path));
+  }
+  // The caller's override wins over the pack, so a page can still measure one setting against another.
+  if(Number.isInteger(config.lookaheadFrames)&&config.lookaheadFrames!>=0)lookahead=config.lookaheadFrames!;
+  // The neutral pose every frame is rendered against. Fetched once and held: it is read on every single frame.
+  referenceCrop=new Uint8Array(await frames.crop(pack.referenceFrame));
   encoder=await createSession(new Uint8Array(await load(pack.encoder)),['wasm'],'FeatherTalk encoder');
   renderer=await createSession(new Uint8Array(await load(pack.renderer)),['webgpu','wasm'],'FeatherTalk renderer');
   store.release(pack.encoder);store.release(pack.renderer);
@@ -53,19 +75,11 @@ async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortW
   const warm=await encoder.run({audio:input});input.dispose();
   if(warm.hidden?.dims.at(-1)!==1024)throw new Error('FeatherTalk encoder output mismatch');
   Object.values(warm).forEach(t=>t.dispose());
-  const image=new ort.Tensor('float32',imageInput(bank,0,pack),[1,6,pack.innerSize,pack.innerSize]);
+  const image=new ort.Tensor('float32',imageInput(referenceCrop,referenceCrop,pack),[1,6,pack.innerSize,pack.innerSize]);
   const audio=new ort.Tensor('float32',new Float32Array(40*1024),[1,40,1024]);
   const result=await renderer.run({image,audio});image.dispose();audio.dispose();
   if(result.clip_0?.dims.join(',')!==`1,3,${pack.outputSize},${pack.outputSize}`)throw new Error('FeatherTalk renderer output mismatch');
   Object.values(result).forEach(t=>t.dispose());post({type:'ready'});
-}
-async function host(index:number):Promise<ImageBitmap> {
-  const cached=hosts.get(index);if(cached)return cached;
-  const bytes=await store.bytes(pack.frames[index].host);
-  const image=await createImageBitmap(new Blob([bytes],{type:'image/jpeg'}));
-  store.release(pack.frames[index].host);hosts.set(index,image);
-  if(hosts.size>24){const oldest=hosts.keys().next().value!;hosts.get(oldest)!.close();hosts.delete(oldest);}
-  return image;
 }
 async function render(requestEpoch:number) {
   if(requestEpoch!==epoch)return;
@@ -76,7 +90,7 @@ async function render(requestEpoch:number) {
     const end=Math.min(nextFrame+8,available);
     if(end<=nextFrame){post({type:'batch',epoch,waiting:true});return;}
     // Fetch the upcoming hosts concurrently so network RTT is paid per batch, not per frame.
-    await Promise.all(Array.from({length:end-nextFrame},(_,i)=>host(hostIndex(nextFrame+i,pack.frames.length))));
+    await Promise.all(Array.from({length:end-nextFrame},(_,i)=>frames.picture(hostIndex(nextFrame+i,pack.frames.length))));
     if(epoch!==requestEpoch)return;
     const start=Math.max(0,nextFrame-16), stop=end+lookahead;
     const wave=new Float32Array((stop-start)*640+80);
@@ -98,11 +112,11 @@ async function render(requestEpoch:number) {
       const hidden=encoded.hidden.data as Float32Array, tokens=encoded.hidden.dims[1];
       for(let frame=nextFrame;frame<end;frame++) {
         if(epoch!==requestEpoch)return;
-        const index=hostIndex(frame,pack.frames.length), hostImage=await host(index);
+        const index=hostIndex(frame,pack.frames.length), hostImage=await frames.picture(index);
         // The 576px renderer is expensive on laptop GPUs. Refresh its mouth at 12.5 fps
         // while keeping host motion and the 25 fps audio clock. The 288px model runs every frame.
         if(pack.innerSize===144 || frame%2===0 || !lastPixels){
-          const image=new ort.Tensor('float32',imageInput(bank,index,pack),[1,6,pack.innerSize,pack.innerSize]);
+          const image=new ort.Tensor('float32',imageInput(referenceCrop,await frames.crop(index),pack),[1,6,pack.innerSize,pack.innerSize]);
           const audio=new ort.Tensor('float32',audioInput(hidden,tokens,frame,start),[1,40,1024]);
           const result=await renderer.run({image,audio});image.dispose();audio.dispose();
           try {

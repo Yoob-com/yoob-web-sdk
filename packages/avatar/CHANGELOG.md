@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0
+
+- Reads the second FeatherTalk pack layout alongside the first, chosen by `runtime.pack` on the signed manifest. Host
+  frames come from an encoded video decoded with WebCodecs rather than one JPEG per frame, and the mouth crops are cut
+  from those frames rather than from a prebuilt bank. The characters republished on 2026-10-12 need this; the packs
+  they replaced keep working unchanged.
+- Takes a second-layout pack's own lip timing (`instantLips`), including the voice delay that keeps the first word
+  behind the first lip frame. `lookaheadFrames` and `mirrorPadding` still override it.
+- A character that ships a still instead of an idle loop rests on the still rather than refusing to prepare.
+- Fixed: the idle video was matched as the first tier-1 `.mp4`, which a pack carrying `hosts.mp4` could satisfy.
+
 ## Unreleased
 
 - Add `YoobWebRTCConversation`: GPT-Live over a direct peer connection. Your backend exchanges the SDP offer for an

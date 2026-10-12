@@ -22,6 +22,13 @@ export interface CharacterManifest {
 
 export interface WebRuntimeSettings {
   assetVersion: string;
+  /**
+   * The character's index file, when it is not the original `feathertalk.json`.
+   *
+   * Naming it here is what lets one SDK read both pack layouts: a manifest that names no pack is the original one,
+   * whose index file has always had that name. Set by the packer alongside a `minSDK` the older SDKs fail.
+   */
+  pack?: string;
   neuralMouthStride?: 1 | 2;
   rendererInputType?: "float32" | "float16";
   rendererPreferredLayout?: "NCHW" | "NHWC";
@@ -58,7 +65,7 @@ export class YoobError extends Error {
   }
 }
 
-export const SDK_VERSION = "0.3.0";
+export const SDK_VERSION = "0.4.0";
 
 /** Public keys whose manifest signatures the SDK accepts, by key id. */
 const SIGNING_KEYS: Record<string, string> = {
