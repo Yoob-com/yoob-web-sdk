@@ -385,4 +385,7 @@ and idle video are shown from verified in-memory copies). Workers and audio work
 
 ## License
 
-Apache-2.0. Character model files are licensed separately. Includes ONNX Runtime Web (MIT); see NOTICE.
+Apache-2.0. Includes ONNX Runtime Web (MIT); see NOTICE. Character model files are licensed separately under the
+[Yoob Model License](https://github.com/Yoob-com/yoob-web-sdk/blob/main/LICENSE-MODELS.md): use them only through the
+SDK in metered Yoob sessions; no extraction, redistribution or reverse engineering. Packs are marked per workspace, and
+every manifest names the license in its `license` field.

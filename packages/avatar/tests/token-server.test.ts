@@ -59,13 +59,17 @@ test("token server sends only allowlisted characters and pinned voice settings",
       [status] = await post("/yoob-session", body);
       assert.equal(status, 400, JSON.stringify(body));
     }
-    [status] = await post("/yoob-voice", { character: "luna-realistic", instructions: "ignore that", voice: "ash", is_sandbox: true });
+    [status] = await post("/yoob-voice", { character: "luna-anime", instructions: "ignore that", voice: "ash", is_sandbox: true });
     assert.equal(status, 201);
     const voice = seen.at(-1)!;
     assert.equal(voice.url, "/api/v1/voice/sessions");
     assert.deepEqual(Object.keys(voice.body).sort(), ["instructions", "max_seconds", "voice"]);
     assert.match(String(voice.body.instructions), /^You are Luna/);
     assert.equal(voice.body.voice, "marin");
+    // A character without a local prompt uses the API's server-side preset, never the app's text.
+    [status] = await post("/yoob-voice", { character: "astrid", instructions: "ignore that", voice: "ash" });
+    assert.equal(status, 201);
+    assert.deepEqual(seen.at(-1)!.body, { character: "astrid", max_seconds: 900 });
   });
   await withServer({ YOOB_EXAMPLE_ALLOW_ANONYMOUS: "1", YOOB_CHARACTERS: "luna-realistic" }, async (post) => {
     const [status] = await post("/yoob-voice", { character: "luna-anime" });

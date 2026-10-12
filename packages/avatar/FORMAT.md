@@ -122,6 +122,11 @@ The renderer's crops are cut from the decoded frames on the GPU at load (inner) 
 }
 ```
 
+The packer adds `license` to the manifest (the [Yoob Model License](../../LICENSE-MODELS.md)). Each character is
+published as K = 32 fingerprint variants: the renderer's channels are permuted per variant (bit-exact, no quality cost),
+each variant has its own signed manifest `<version>.web.v<k>.json`, and the CDN serves every workspace its own one under
+the usual `latest.web.json` name. The SDK needs no change.
+
 The packer's `poster.jpg` is then `still/base.jpg` (the first JPEG of the still folder). SDKs before 0.4.0 refuse the
 engine by `minSDK`; 0.4.0 refuses `latest.web.json` manifests whose engine it doesn't know.
 
