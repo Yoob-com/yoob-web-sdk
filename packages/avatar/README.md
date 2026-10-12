@@ -380,11 +380,14 @@ Using your own voice stack? Call `mic.start()` and read `mic.on("audio", pcm => 
 
 ## Characters
 
-SDK 0.3.0 also supports the October 7 FeatherTalk packs:
-`r2-f01-valentina`, `r2-f04-leonie`, `r2-f08-astrid`, `r2-f10-linda`,
-`r2-f12-lina`, `r2-f14-zoe`, `r2-f17-maya`, `r2-m01-santiago`,
-`r2-m03-julien`, `r2-m05-lars`, `r2-m11-ren`, `r2-m16-kofi`, and `r2-m29-bruno`.
+SDK 0.3.0 also supports the FeatherTalk packs:
+`valentina`, `leonie`, `astrid`, `linda`, `lina`, `zoe`, `maya`,
+`santiago`, `julien`, `lars`, `ren`, `kofi`, and `bruno`.
 Pass the same ID in `YoobAvatar({ character })` and your backend session's `characters` list.
+
+**These ids changed on 2026-10-12.** They were `r2-f01-valentina`, `r2-m16-kofi` and so on; the old ids now carry
+different packs and are not served to SDK keys, so a session naming one is refused at download. Update the ids in your
+backend's `characters` list. The faces are the same, at twice the resolution.
 The signed manifest chooses the engine automatically; conversation and metering APIs are unchanged.
 These packs use their own shared encoder and cannot use Luna's distilled encoder.
 Host JPEGs load as speech advances, with up to eight fetched concurrently; model and crop banks load during preparation.
