@@ -89,7 +89,12 @@ export interface YoobAvatarOptions {
   getCredentials: () => Promise<YoobCredentials>;
   /** `"cover"` (default) fills the container; `"contain"` letterboxes. */
   fit?: "cover" | "contain";
-  /** Use an app-hosted idle loop instead of the character pack's idle video. */
+  /**
+   * Use an app-hosted idle loop instead of the character pack's idle video.
+   *
+   * Ignored by a second-layout pack, which rests on its own blinking still instead: an idle loop is footage of the
+   * character talking, and showing it while nobody is speaking is the one thing the still exists to avoid.
+   */
   idleVideoUrl?: string;
   /**
    * Renderer tuning for FeatherTalk characters, for measuring a pack against something other than its defaults.
@@ -541,7 +546,18 @@ export class YoobAvatar {
     const runtimeFiles = isFeatherTalk(manifest.engine)
       ? manifest.files.filter((file) => prepared(file.path, manifest))
       : manifest.files;
-    const preparedFiles = this.options.idleVideoUrl
+    // A second-layout pack rests on its still, blinking, exactly as the iOS SDK does: `still.base` with `still.blinks`
+    // over `still.rect`, on the schedule both platforms share (`./feathertalk/idle`). It is the character's own frame
+    // at the pack's own size, and it moves only its eyes.
+    //
+    // That is why such a pack ignores `idleVideoUrl`. An idle loop is footage of the character talking — head turning,
+    // mouth moving — so a page that supplies one shows the character speaking while nobody is saying anything, and the
+    // loops we ship are 540x960 against a 1080x1920 canvas, so it is also the only blurry thing on screen. Before this,
+    // every caller that set the option (the demo and the console's own playground both set it unconditionally) got the
+    // loop and the pack's still was downloaded and never drawn.
+    const restsOnStill = !!manifest.runtime?.pack;
+    const idleVideoUrl = restsOnStill ? undefined : this.options.idleVideoUrl;
+    const preparedFiles = idleVideoUrl
       ? runtimeFiles.filter((file) => file.path !== videoFile?.path)
       : runtimeFiles;
     const total = preparedFiles.reduce((sum, file) => sum + file.size, 0);
@@ -554,10 +570,10 @@ export class YoobAvatar {
     // Tier 0 and 1 on the page: the poster, then the idle loop the engine draws.
     const poster = await store.bytes(manifest.poster, count);
     this.poster.src = this.objectUrl(poster, "image/jpeg");
-    if (this.options.idleVideoUrl) {
-      this.video.src = this.options.idleVideoUrl;
+    if (idleVideoUrl) {
+      this.video.src = idleVideoUrl;
       this.video.load();
-    } else if (videoFile) {
+    } else if (videoFile && !restsOnStill) {
       const video = await store.bytes(videoFile.path, count);
       this.video.src = this.objectUrl(video, "video/mp4");
       this.video.load();

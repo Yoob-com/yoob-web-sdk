@@ -423,9 +423,10 @@ frames are decoded with WebCodecs from the byte ranges the pack lists, and each 
 there is nothing to keep in step between the two. **A browser without WebCodecs cannot play a second-layout
 character**; every current browser has it, and the SDK says so plainly rather than failing later.
 
-A second-layout pack also states its own lip timing (`instantLips`) and the voice the face is meant to speak in
-(`face.voice`), and ships a still rather than an idle loop — pass `idleVideoUrl` to show motion while it rests.
-Neither layout reproduces the iOS pose-selection or still-blink controllers yet.
+A second-layout pack also states its own lip timing (`instantLips`), which governs when the voice starts, and the
+voice the face is meant to speak in (`face.voice`). It rests on its own still, blinking, and ignores `idleVideoUrl`:
+an idle loop is footage of the character talking, so showing one while nobody is speaking moves the head and mouth
+for no reason. Neither layout reproduces the iOS pose-selection controller yet.
 Per-frame inference and download speed determine whether playback can sustain real time on a given device.
 
 | Id | Style | Download |

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.0
+
+- A pack that states its own lip timing is now believed about when the voice starts. `instantLips.voiceDelayMilliseconds`
+  used to be maxed against a fixed 400 ms cushion, so every pack that stated one silently ran on 400 ms and its own
+  figure was never once used; the start also waited for eight rendered frames. A pack that states a delay now gets that
+  delay and the first frame, which is what it was built for. Packs that state nothing keep 400 ms and eight frames.
+  Measured on Julien, who asks for 110 ms: first sound 413 ms after the first audio, now 136 ms; the drawn frame 500 ms
+  behind its packet, now 250 ms; frames running 8-9 ahead of the voice, now 1-2. No frame was held in either case.
+- A second-layout pack now rests on its own blinking still and ignores `idleVideoUrl`. An idle loop is footage of the
+  character talking, so a page that supplied one showed the character moving its head and mouth while nobody was
+  speaking — and the loops we ship are 540x960 against a 1080x1920 canvas, so it was also the only blurry thing on
+  screen. The pack's still was downloaded and never drawn. In silence the mouth is now completely still and only the
+  eyes blink, as the iOS SDK has always done.
+
 ## 0.9.0
 
 - A GPT-Live character rests between replies instead of mouthing the silence. GPT-Live never stops sending: it streams
