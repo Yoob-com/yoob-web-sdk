@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 - A performance HUD: `stats: true` or `?yoobstats=1` draws draw/frame/lip rates, the time inside each model, the
   audio cushion and the two latencies that matter, and reports the same snapshot to `onStats` once a second.
