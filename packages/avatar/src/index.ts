@@ -22,7 +22,8 @@ export {
 } from "./gemini-conversation";
 // From the root, not a separate entry: unlike the LiveKit path this needs nothing but the browser's own WebRTC.
 export {
-  YoobWebRTCConversation, type YoobWebRTCConversationOptions, type YoobLiveAnswer,
+  YoobWebRTCConversation, isAllowedLiveUrl, DEFAULT_LIVE_HOSTS,
+  type YoobWebRTCConversationOptions, type YoobLiveAnswer,
 } from "./webrtc-conversation";
 export { PcmResampler } from "./resampler";
 export const version = SDK_VERSION;
@@ -49,6 +50,19 @@ export interface YoobCredentials {
    */
   content_keys?: Record<string, string>;
   content_key_id?: string;
+  /**
+   * Full mode: the credential that opens one conversation Yoob hosts, and where to present it.
+   *
+   * Returned when the session was opened with `mode: "full"` and the workspace could pay for it. The integrator's
+   * backend never sees an OpenAI key; these two fields are what replace it. Present them to
+   * `YoobWebRTCConversation` by passing the session response through unchanged, and it does the rest.
+   *
+   * It opens one conversation and lives about five minutes, so a second conversation needs a new session.
+   */
+  live_token?: string;
+  live_url?: string;
+  live_max_seconds?: number;
+  live_expires_at?: number;
 }
 
 export type YoobPhase =
@@ -184,6 +198,17 @@ export class YoobAvatar {
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
   /** The resting picture for a character that ships no idle loop; drawn once, then left alone. */
   private still?: ImageBitmap;
+  /**
+   * The full-mode credential from the current session, if there is one.
+   *
+   * Read by `YoobWebRTCConversation` when no `getAnswer` was given. Undefined for an avatar-only session, which is
+   * what tells the conversation that the integrator must supply the handshake itself.
+   */
+  get liveSession(): { token: string; url: string } | undefined {
+    const { live_token: token, live_url: url } = this.credentials ?? {};
+    return token && url ? { token, url } : undefined;
+  }
+
   /** The user's microphone: device choice, mute, level and audio packets. */
   readonly microphone = new YoobMicrophone(() => this.engine().audio);
 

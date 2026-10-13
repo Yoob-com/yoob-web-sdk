@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- Full mode: `YoobWebRTCConversation` without `getAnswer`. A session opened with `mode: "full"` carries a credential
+  for one conversation and the SDK presents it to Yoob, so an integrator needs no OpenAI key and no handshake route.
+  `getAnswer` is unchanged for anyone bringing their own.
+- `liveHosts` pins where a full-mode conversation may be opened, defaulting to `*.yoob.com`, so a compromised backend
+  cannot negotiate the user's microphone somewhere else.
+
 ## 0.5.0
 
 - Accepts `realistic-web` as well as `feathertalk-web`: the same renderer, republished under a name that says what it

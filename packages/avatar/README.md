@@ -247,7 +247,31 @@ microphone's 24 kHz audio to the 16 kHz Gemini expects, and plays Gemini's 24 kH
 audio-only sessions last up to 15 minutes. Gemini doesn't report when a user turn ends, so a spoken turn goes from
 `listening` straight to `speaking`. `thinking` appears after `greet` and `sendText`.
 
-## Talk with it: GPT-Live
+## Talk with it: GPT-Live, with no key of your own
+
+Open the session with `mode: "full"` and Yoob opens the conversation too, on its own OpenAI account. Pass the session
+response through unchanged and there is nothing else to build — no handshake route, no provider key:
+
+```ts
+const conversation = new YoobWebRTCConversation(avatar, {
+  onUserTranscript: (text) => (userCaption.textContent = text),
+  onAssistantTranscript: (text) => (lunaCaption.textContent = text),
+});
+```
+
+The session carries a credential for **one** conversation, good for about five minutes, and the minutes are billed to
+your Yoob workspace at the `full` rate. The credit is reserved when the session opens rather than when someone speaks:
+with a direct peer connection Yoob is not in the media path, so a conversation that is never reported back would
+otherwise cost nothing. The reservation shrinks as real minutes are billed and is released when the session ends.
+
+Pin the character's prompt on your backend, in the same request that opens the session. The page can pass
+`instructions` and `voice`, but a pinned one wins and the page's is ignored — and the model runs on Yoob's account, so
+what an end user can make a character say is worth deciding on your server.
+
+A full-mode conversation is only ever opened against `*.yoob.com`; override `liveHosts` only to reach a console you
+run yourself.
+
+## Talk with it: GPT-Live, with your own key
 
 GPT-Live cannot be reached from a page on its own: it authenticates with an `Authorization` header, and a browser's
 WebSocket cannot set one. So the model takes an SDP offer instead. Your backend does the handshake with your OpenAI

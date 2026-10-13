@@ -23,8 +23,24 @@ export interface YoobWebRTCConversationOptions {
    *
    * Your backend makes the call that starts the session, with your OpenAI key. Called once per `start()`: an answer
    * belongs to one peer connection.
+   *
+   * Leave it out for **full mode**, where Yoob opens the conversation on its own OpenAI account: the session your
+   * backend opened with `mode: "full"` carries the credential and this class presents it for you, so you need no
+   * OpenAI key and no handshake route of your own.
    */
-  getAnswer: (offer: string) => Promise<YoobLiveAnswer>;
+  getAnswer?: (offer: string) => Promise<YoobLiveAnswer>;
+  /**
+   * Hosts a full-mode conversation may be opened through. Default `["*.yoob.com"]`.
+   *
+   * The same guarantee `voiceHosts` gives a Yoob voice session: a session response pointing anywhere else is refused,
+   * so a compromised or misconfigured backend cannot negotiate the user's microphone somewhere we did not mint a
+   * grant for. Only `https:` is accepted, and localhost for running the console yourself.
+   */
+  liveHosts?: string[];
+  /** The character's prompt, when your backend pinned none at session open. Ignored if it did. */
+  instructions?: string;
+  /** The character's voice, when your backend pinned none at session open. Ignored if it did. */
+  voice?: string;
   /** Publish the user's microphone. Default true. */
   microphone?: boolean;
   /** Meter this conversation to your workspace (default true). */
@@ -35,6 +51,31 @@ export interface YoobWebRTCConversationOptions {
   /** What the character is saying, as it streams. */
   onAssistantTranscript?: (text: string, final: boolean) => void;
   onError?: (error: YoobError) => void;
+}
+
+/** Where a full-mode conversation may be opened. See `liveHosts`. */
+export const DEFAULT_LIVE_HOSTS = ["*.yoob.com"];
+
+/**
+ * Whether a full-mode handshake URL is one we are willing to send an offer to.
+ *
+ * The offer itself is not a secret, but the connection it opens carries the user's microphone, so where it is
+ * negotiated is worth pinning. `*.` matches any subdomain; localhost is allowed so the console can be run locally.
+ */
+export function isAllowedLiveUrl(value: string, hosts: string[] = DEFAULT_LIVE_HOSTS): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.username || url.password) return false;
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (url.protocol !== "https:" && !local) return false;
+  if (local) return true;
+  return hosts.some((host) => (host.startsWith("*.")
+    ? url.hostname === host.slice(2) || url.hostname.endsWith(host.slice(1))
+    : url.hostname === host));
 }
 
 /** The label the model expects; it must exist in the offer. */
@@ -103,7 +144,7 @@ export class YoobWebRTCConversation {
       await this.#gathered(pc);
       if (this.#closing) return;
 
-      const answer = await this.options.getAnswer(pc.localDescription!.sdp);
+      const answer = await this.#answer(pc.localDescription!.sdp);
       if (this.#closing) return;
       if (!answer?.sdp) throw new YoobError("unsupported", "The backend returned no SDP answer.");
       await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
@@ -140,6 +181,45 @@ export class YoobWebRTCConversation {
     this.#pc = undefined;
     this.#setState("ended");
     await this.avatar.endSession().catch(() => undefined);
+  }
+
+  /**
+   * The model's answer, from whichever side is paying for the conversation.
+   *
+   * With `getAnswer`, the integrator's backend holds an OpenAI key and does the handshake. Without it, this is full
+   * mode: the session Yoob opened carries a grant, and the offer goes to Yoob instead. One of the two must be there —
+   * a session opened as `mode: "avatar"` has no grant, and that is the mistake this message is for.
+   */
+  async #answer(offer: string): Promise<YoobLiveAnswer> {
+    if (this.options.getAnswer) return this.options.getAnswer(offer);
+
+    const live = this.avatar.liveSession;
+    if (!live) {
+      throw new YoobError("unsupported",
+        'This session has no voice. Open it with mode: "full" for Yoob voice, or pass getAnswer to use your own '
+        + "OpenAI key.");
+    }
+    if (!isAllowedLiveUrl(live.url, this.options.liveHosts ?? DEFAULT_LIVE_HOSTS)) {
+      throw new YoobError("unsupported", `Refusing to open a conversation at ${live.url}.`);
+    }
+
+    const response = await fetch(live.url, {
+      method: "POST",
+      credentials: "omit",
+      headers: { authorization: `Bearer ${live.token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        sdp: offer,
+        // Used only when the backend pinned neither; the server ignores them otherwise.
+        ...(this.options.instructions ? { instructions: this.options.instructions } : {}),
+        ...(this.options.voice ? { voice: this.options.voice } : {}),
+      }),
+    });
+    const body = await response.json().catch(() => null) as { sdp?: string; error?: string } | null;
+    if (!response.ok) {
+      const message = body?.error ?? `Yoob refused the conversation (${response.status}).`;
+      throw new YoobError(response.status === 402 ? "out-of-credit" : "unauthorized", message);
+    }
+    return { sdp: body?.sdp ?? "" };
   }
 
   /** Her voice, straight into the character. */
