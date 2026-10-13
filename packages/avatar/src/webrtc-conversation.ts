@@ -217,7 +217,9 @@ export class YoobWebRTCConversation {
     const body = await response.json().catch(() => null) as { sdp?: string; error?: string } | null;
     if (!response.ok) {
       const message = body?.error ?? `Yoob refused the conversation (${response.status}).`;
-      throw new YoobError(response.status === 402 ? "out-of-credit" : "unauthorized", message);
+      // 424 is the voice model failing rather than us refusing: it is worth retrying, which "unauthorized" is not.
+      const kind = response.status === 402 ? "out-of-credit" : response.status === 424 ? "network" : "unauthorized";
+      throw new YoobError(kind, message);
     }
     return { sdp: body?.sdp ?? "" };
   }
