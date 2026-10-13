@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.11.0
+
+- Reverts 0.10.0's start gate. The 400 ms PCM cushion and the eight-frame wait are back, and a pack's
+  `instantLips.voiceDelayMilliseconds` goes back to being maxed against them rather than replacing them.
+
+  0.10.0 read those as one number and they are three. The cushion is a jitter buffer: it is what stops network jitter
+  emptying the playback worklet, and a thin one breaks the voice up. The frame gate gives the renderer a lead before
+  the audio clock starts consuming frames, and without it the renderer falls behind and the picture freezes on
+  whatever frame it had. The pack's delay is neither of those — it is lip alignment, how long the voice waits so the
+  mouth is ready. iOS can start at once because it keeps its own playback cushion as well, and because a late frame
+  there only holds the picture: its voice never waits on the renderer. On this path the frames are driven by the
+  audio clock, so starving the renderer costs the sound and the picture together.
+
+  0.10.0's measurement did not catch it because the test fed PCM from a local timer into a warm renderer — perfectly
+  paced, no jitter, which is the one condition the cushion exists for.
+
+- The resting face from 0.10.0 is unaffected and stays: a second-layout pack still rests on its own blinking still
+  and still ignores `idleVideoUrl`.
+
 ## 0.10.0
 
 - A pack that states its own lip timing is now believed about when the voice starts. `instantLips.voiceDelayMilliseconds`

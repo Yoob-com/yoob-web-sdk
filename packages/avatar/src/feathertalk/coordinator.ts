@@ -15,17 +15,6 @@ export class FeatherCoordinator {
   private readyResolve?:()=>void; private readyReject?:(error:Error)=>void;
   /** How long the voice waits for the mouth, in samples at 24 kHz. Stated by the pack; zero when it states none. */
   private voiceDelaySamples=0;
-  /**
-   * How many frames must exist before the first sound.
-   *
-   * Eight for a pack that states no timing of its own: those packs were tuned against nine frames of lookahead, so by
-   * the time the ninth frame's audio has arrived there are eight frames anyway, and waiting costs nothing. A pack that
-   * states its timing was built to start at once (iOS `LipTiming.InstantLips`: one frame of lookahead, drawn one at a
-   * time, the voice held back by `voiceDelayMilliseconds` and nothing else), and holding it to eight frames adds the
-   * renderer's cost for seven of them to how long the listener waits to hear anything — measured at 413 ms against
-   * Julien, who asks for 110.
-   */
-  private startFrames=8;
   private initTimer?:ReturnType<typeof setTimeout>;
   /** Set when the integrator asked for stats. Undefined costs one property read per draw and nothing else. */
   stats?: StatsCollector;
@@ -98,15 +87,13 @@ export class FeatherCoordinator {
   }
   private maybeStart():void {
     if(this.started||!this.streaming)return;
-    // How much PCM to hold before the first sample is heard.
+    // Keep a 400 ms PCM cushion so LiveKit jitter does not empty the worklet
+    // right after playback begins. Short finalized replies use what they have.
     //
-    // 400 ms for a pack that states nothing, so LiveKit jitter does not empty the worklet right after playback
-    // begins. A pack that states a voice delay replaces that rather than adding to it: the number is the pack's own
-    // answer to the same question, measured for how it was built, and taking the longer of the two meant every such
-    // pack silently ran on 400 ms and its own figure was never once used.
-    const cushion=this.voiceDelaySamples||9600;
-    if(this.queuedSamples<cushion&&!this.finalReceived){this.stats?.noteStartGate('audio');return;}
-    if(this.received<this.startFrames&&!(this.finalReceived&&this.received>0)){this.stats?.noteStartGate('frames');return;}
+    // A pack that asks the voice to wait for the mouth adds to that cushion rather than replacing it: both are
+    // reasons to hold the first sample back, and the longer one governs.
+    if(this.queuedSamples<Math.max(9600,this.voiceDelaySamples)&&!this.finalReceived){this.stats?.noteStartGate('audio');return;}
+    if(this.received<8&&!(this.finalReceived&&this.received>0)){this.stats?.noteStartGate('frames');return;}
     this.started=true;this.video.pause();
     // The first sound of this reply is about to be asked for. Pairs with the first audio that arrived for it.
     this.stats?.noteReplyHeard();
@@ -122,8 +109,7 @@ export class FeatherCoordinator {
       clearTimeout(this.initTimer);this.readyResolve?.();this.readyResolve=undefined;this.readyReject=undefined;return;
     }
     if(data.type==='voiceDelay'){
-      // A pack that states its own voice delay states the whole start condition: that delay, and the first frame.
-      this.voiceDelaySamples=Math.max(0,Math.round(data.ms*24));this.startFrames=1;return;
+      this.voiceDelaySamples=Math.max(0,Math.round(data.ms*24));return;
     }
     if(data.type==='progress'){
       this.callbacks.onRuntimeEvent?.({type:'status',loadedBytes:data.loadedBytes} as Parameters<NonNullable<RenderCoordinatorCallbacks['onRuntimeEvent']>>[0]);return;
