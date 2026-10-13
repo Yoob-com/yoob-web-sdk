@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- A performance HUD: `stats: true` or `?yoobstats=1` draws draw/frame/lip rates, the time inside each model, the
+  audio cushion and the two latencies that matter, and reports the same snapshot to `onStats` once a second.
+- Counts things the FeatherTalk path never reported: a draw with no frame ready (the freeze a viewer sees as a
+  stutter), frames rendered and discarded unseen, batches starved of audio, and playback underruns — which the audio
+  worklet has always measured and nothing subscribed to.
+
 ## 0.6.0
 
 - Full mode: `YoobWebRTCConversation` without `getAnswer`. A session opened with `mode: "full"` carries a credential

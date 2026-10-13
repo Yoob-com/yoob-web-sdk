@@ -4,6 +4,8 @@ import {
   isFeatherTalk,
 } from "./cdn";
 import type { RemoteAudioTrack } from "./engine/audio/conversation-audio";
+import { StatsCollector, type YoobStats } from "./stats";
+import { StatsOverlay } from "./stats-overlay";
 import { AvatarCoordinator } from "./engine/runtime/avatar-coordinator";
 import type { RendererSpatialContract } from "./engine/runtime/generated/runtime-tier-contract";
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
@@ -26,6 +28,7 @@ export {
   type YoobWebRTCConversationOptions, type YoobLiveAnswer,
 } from "./webrtc-conversation";
 export { PcmResampler } from "./resampler";
+export type { YoobStats } from "./stats";
 export const version = SDK_VERSION;
 
 /**
@@ -102,8 +105,17 @@ export interface YoobAvatarOptions {
    */
   lookaheadFrames?: number;
   mirrorPadding?: boolean;
+  /**
+   * Show what the renderer is doing, and report it to `onStats`.
+   *
+   * Off unless asked for, and `?yoobstats=1` on the page turns it on without a rebuild — which is the state a
+   * customer's site is in when you most want to see these numbers. Costs a sample a second and a little text.
+   */
+  stats?: boolean;
   onPhase?: (phase: YoobPhase) => void;
   onProgress?: (progress: YoobProgress) => void;
+  /** The renderer's numbers, once a second, while `stats` is on. */
+  onStats?: (stats: YoobStats) => void;
   onError?: (error: YoobError) => void;
   /**
    * The session stopped and the character stopped rendering: the workspace ran out of credit (`out-of-credit`), Yoob
@@ -162,6 +174,21 @@ const SAMPLE_RATE = 24_000;
  * The avatar plays the audio itself so the lips stay in sync.
  */
 /**
+ * Stats asked for by the page rather than by the app.
+ *
+ * The same shape as the engine's other field switches (`?gpublend=0`, `?pcmreserve=1`): read once, wrapped because a
+ * non-browser host has no `location`. This is what makes the HUD a support tool — a customer with a stutter cannot be
+ * asked to redeploy.
+ */
+const STATS_FROM_URL = (() => {
+  try {
+    return new URLSearchParams(location.search).has("yoobstats");
+  } catch {
+    return false;
+  }
+})();
+
+/**
  * Whether a FeatherTalk file is part of `prepare()`, so progress counts what is actually about to be downloaded.
  *
  * The first layout fetches its host JPEGs as the conversation advances, so they are not prepare-time bytes. The second
@@ -198,6 +225,10 @@ export class YoobAvatar {
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
   /** The resting picture for a character that ships no idle loop; drawn once, then left alone. */
   private still?: ImageBitmap;
+  /** Collecting and showing the renderer's numbers. Both undefined unless they were asked for. */
+  private statsCollector?: StatsCollector;
+  private statsOverlay?: StatsOverlay;
+  private statsTimer?: ReturnType<typeof setInterval>;
   /**
    * The full-mode credential from the current session, if there is one.
    *
@@ -419,6 +450,7 @@ export class YoobAvatar {
     this.destroyed = true;
     const credentials = this.credentials;
     this.stopHeartbeat();
+    this.stopStats();
     this.microphone.stop();
     this.coordinator?.destroy();
     this.coordinator = undefined;
@@ -456,12 +488,16 @@ export class YoobAvatar {
     if (this.phaseValue === "stopped") {
       throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped. Call prepare() to start a new one.");
     }
-    this.coordinator ??= new AvatarCoordinator(this.canvas, this.video, {
-      onFirstHostFrame: () => { this.canvas.style.opacity = "1"; },
-      onPlaybackEnded: () => this.finishUtterance(),
-      onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
-      onRuntimeEvent: (event) => this.runtimeEvent?.(event),
-    });
+    if (!this.coordinator) {
+      this.coordinator = new AvatarCoordinator(this.canvas, this.video, {
+        onFirstHostFrame: () => { this.canvas.style.opacity = "1"; },
+        onPlaybackEnded: () => this.finishUtterance(),
+        onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
+        onRuntimeEvent: (event) => this.runtimeEvent?.(event),
+      });
+      if (this.options.stats || STATS_FROM_URL) this.startStats();
+      this.coordinator.stats = this.statsCollector;
+    }
     return this.coordinator;
   }
 
@@ -570,6 +606,35 @@ export class YoobAvatar {
     const url = URL.createObjectURL(new Blob([data], { type }));
     this.objectUrls.push(url);
     return url;
+  }
+
+  /**
+   * Begins collecting, and shows the overlay unless only the callback was wanted.
+   *
+   * One sample a second: often enough to see a stall as it happens, rare enough that the measuring is not itself
+   * something to measure.
+   */
+  private startStats(): void {
+    this.statsCollector = new StatsCollector();
+    this.statsOverlay = new StatsOverlay();
+    this.root.append(this.statsOverlay.element);
+    this.statsTimer = setInterval(() => {
+      const collector = this.statsCollector;
+      if (!collector) return;
+      const manifest = this.manifestValue;
+      if (manifest) collector.describe(manifest.character, manifest.version, manifest.width, manifest.height);
+      const stats = collector.sample();
+      this.statsOverlay?.update(stats);
+      this.options.onStats?.(stats);
+    }, 1000);
+  }
+
+  private stopStats(): void {
+    if (this.statsTimer !== undefined) clearInterval(this.statsTimer);
+    this.statsTimer = undefined;
+    this.statsOverlay?.remove();
+    this.statsOverlay = undefined;
+    this.statsCollector = undefined;
   }
 
   private setPhase(phase: YoobPhase): void {

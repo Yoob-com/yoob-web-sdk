@@ -2,16 +2,26 @@ import { isFeatherTalk } from '../../cdn';
 import { ConversationAudio } from '../audio/conversation-audio';
 import { RenderCoordinator, type RenderCoordinatorCallbacks } from './render-coordinator';
 import { FeatherCoordinator } from '../../feathertalk/coordinator';
+import type { StatsCollector } from '../../stats';
 
 /** Keeps the user-activated AudioContext while choosing the engine from the signed manifest. */
 export class AvatarCoordinator {
   readonly audio=new ConversationAudio();
   private renderer?:RenderCoordinator|FeatherCoordinator;
+  /**
+   * Where the renderer reports what it is doing, when stats were asked for.
+   *
+   * Only the FeatherTalk path fills it in. The Luna renderer has its own, older telemetry — `onMetrics`,
+   * `onLatency`, `onTurnTelemetry` — which nothing currently subscribes to; wiring that up is its own job.
+   */
+  stats?:StatsCollector;
   constructor(private canvas:HTMLCanvasElement,private video:HTMLVideoElement,private callbacks:RenderCoordinatorCallbacks){}
   async initialize(...args:Parameters<RenderCoordinator['initialize']>):Promise<void>{
     if(this.renderer)throw new Error('Renderer already initialized');
     if(isFeatherTalk(args[0].manifest.engine)){
-      this.renderer=new FeatherCoordinator(this.canvas,this.video,this.callbacks,this.audio);
+      const feather=new FeatherCoordinator(this.canvas,this.video,this.callbacks,this.audio);
+      feather.stats=this.stats;
+      this.renderer=feather;
       await this.renderer.initialize(args[0]);
     }else{
       this.renderer=new RenderCoordinator(this.canvas,this.video,this.callbacks,this.audio);

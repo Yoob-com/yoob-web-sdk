@@ -434,6 +434,38 @@ Per-frame inference and download speed determine whether playback can sustain re
 
 `luna-realistic` is available in the [iOS SDK](https://github.com/Yoob-com/yoob-ios-sdk). Its web renderer is on the way.
 
+## Measuring performance
+
+Pass `stats: true`, or add `?yoobstats=1` to the page, and the SDK draws what the renderer is actually doing:
+
+```
+draw 60fps   frames 27/s   lips 13fps   queue 8
+enc 27.4ms   rend 41.0ms   host 1.3ms
+audio 431ms   lead +7f
+lip 440ms   reply 433ms   waited on frames
+webgpu · kofi · 2026.10.12.2 · 1080x1920
+```
+
+The same snapshot goes to `onStats` once a second, so an app can log or graph it.
+
+| | |
+|---|---|
+| `draw` | canvas draws per second — the animation frame loop |
+| `frames` | frames the renderer produced per second; 25 is real time |
+| `lips` | how often the mouth is redrawn. A 576px pack runs the renderer every other frame by design, so the head moves at 25 and the lips at 12.5 |
+| `queue` | frames rendered and waiting to be drawn, of 20 |
+| `enc` / `rend` / `host` | time in the encoder, in the renderer per mouth frame, and getting one host picture |
+| `audio` | milliseconds of voice buffered ahead of the playhead |
+| `lead` | how far ahead of the voice the frames run. Two frames is 80 ms, the edge of noticeable offset |
+| `lip` / `reply` | audio arriving to its mouth frame drawn, and a reply's first audio to its first sound |
+| `waited on` | which start gate was last to clear: `audio` means the network was slow, `frames` means the renderer was |
+
+A second line appears only when something is wrong — `held` (a draw with no frame ready, which is the freeze a
+viewer sees), `dropped`, `starved` (the renderer ran out of audio) and `underrun` (playback ran dry, which is
+audible). A quiet HUD is a healthy one.
+
+The overlay is a `div.yoob-avatar-stats` inside the avatar's root, so a page can restyle or hide it.
+
 ## What is billed
 
 A session is billed for the time the user spends talking to the character, and for nothing else.

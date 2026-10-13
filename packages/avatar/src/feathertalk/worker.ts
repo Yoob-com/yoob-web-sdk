@@ -8,6 +8,10 @@ import { readPackV2 } from './pack-v2';
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 let access: CdnAccess, store: ChunkStore, pack: FeatherPack;
 let frames: HostFrames, referenceCrop: Uint8Array;
+/** Which execution provider the renderer session actually came up on. */
+let backend='';
+/** Milliseconds spent in each stage of the batch being built, reported with it. */
+let encoderMs=0, rendererMs=0, hostMs=0, neuralFrames=0;
 /** What this character's graphs call their tensors. The first layout's names are fixed; the second states its own. */
 let tensors: FeatherTensors = DEFAULT_TENSORS;
 let encoder: ort.InferenceSession, renderer: ort.InferenceSession;
@@ -68,7 +72,11 @@ async function initialize(config: CdnAccess & {manifest: CharacterManifest; ortW
   tensors=pack.tensors??DEFAULT_TENSORS;
   referenceCrop=new Uint8Array(await frames.crop(pack.referenceFrame));
   encoder=await createSession(new Uint8Array(await load(pack.encoder)),['wasm'],'FeatherTalk encoder');
-  renderer=await createSession(new Uint8Array(await load(pack.renderer)),['webgpu','wasm'],'FeatherTalk renderer');
+  // It asks for WebGPU and falls back to wasm without telling anyone, which is the difference between a smooth
+  // character and a slideshow. `onFallback` fires only on that refusal, so it is the honest answer to which one ran.
+  backend='webgpu';
+  renderer=await createSession(new Uint8Array(await load(pack.renderer)),['webgpu','wasm'],'FeatherTalk renderer',
+    ()=>{backend='wasm';});
   store.release(pack.encoder);store.release(pack.renderer);
   canvas=new OffscreenCanvas(pack.width,pack.height);context=canvas.getContext('2d')!;
   patch=new OffscreenCanvas(pack.outputSize,pack.outputSize);patchContext=patch.getContext('2d')!;
@@ -94,8 +102,12 @@ async function render(requestEpoch:number) {
     const available=final?totalFrames:Math.max(0,Math.floor((samples16.length-80)/640)-lookahead);
     const end=Math.min(nextFrame+8,available);
     if(end<=nextFrame){post({type:'batch',epoch,waiting:true});return;}
+    encoderMs=0;rendererMs=0;hostMs=0;neuralFrames=0;
+    const hostStart=performance.now();
     // Fetch the upcoming hosts concurrently so network RTT is paid per batch, not per frame.
     await Promise.all(Array.from({length:end-nextFrame},(_,i)=>frames.picture(hostIndex(nextFrame+i,pack.frames.length))));
+    // The whole batch's pictures, fetched together: a JPEG each, or one group of video decoded at once.
+    hostMs=(performance.now()-hostStart)/Math.max(1,end-nextFrame);
     if(epoch!==requestEpoch)return;
     const start=Math.max(0,nextFrame-16), stop=end+lookahead;
     const wave=new Float32Array((stop-start)*640+80);
@@ -112,7 +124,9 @@ async function render(requestEpoch:number) {
       wave[i]=(sample/32768-pack.waveformMean)/pack.waveformStd;
     }
     const tensor=new ort.Tensor('float32',wave,[1,wave.length]);
+    const encoderStart=performance.now();
     const encoded=await encoder.run({[tensors.encoderInput]:tensor});tensor.dispose();
+    encoderMs=performance.now()-encoderStart;
     try {
       const out=encoded[tensors.encoderOutput];
       const hidden=out.data as Float32Array, tokens=out.dims[1];
@@ -124,7 +138,11 @@ async function render(requestEpoch:number) {
         if(pack.innerSize===144 || frame%2===0 || !lastPixels){
           const image=new ort.Tensor('float32',imageInput(referenceCrop,await frames.crop(index),pack),[1,6,pack.innerSize,pack.innerSize]);
           const audio=new ort.Tensor('float32',audioInput(hidden,tokens,frame,start),[1,40,1024]);
+          const rendererStart=performance.now();
           const result=await renderer.run({[tensors.rendererImage]:image,[tensors.rendererAudio]:audio});image.dispose();audio.dispose();
+          // Per neural frame, not per emitted frame: a big pack refreshes the mouth every other frame, so dividing
+          // by the batch size would halve the number and hide what the renderer actually costs.
+          rendererMs+=performance.now()-rendererStart;neuralFrames+=1;
           try {
             const output=result[tensors.rendererOutput].data as Float32Array, size=pack.outputSize, plane=size*size;
             const pixels=new Uint8ClampedArray(plane*4);
@@ -147,7 +165,8 @@ async function render(requestEpoch:number) {
         post({type:'frame',epoch,frame,bitmap,pcm:audioPcm},[bitmap,audioPcm.buffer]);nextFrame=frame+1;
       }
     } finally {Object.values(encoded).forEach(t=>t.dispose());}
-    post({type:'batch',epoch,done:final&&nextFrame>=totalFrames});
+    post({type:'batch',epoch,done:final&&nextFrame>=totalFrames,backend,
+      timing:{encoderMs,rendererMs:neuralFrames?rendererMs/neuralFrames:0,hostMs,neuralFrames}});
   } finally {
     busy=false;
     if(requested){requested=false;void render(epoch).catch(fail);}
