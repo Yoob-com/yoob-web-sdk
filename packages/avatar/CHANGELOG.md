@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+- A FeatherTalk pack with no idle loop now rests on its own blinking still instead of freezing on the last speech
+  frame, and a reply settles onto it over 250 ms. Packs that ship an idle loop, and the Luna renderer, are unchanged.
+
 ## 0.7.0
 
 - A performance HUD: `stats: true` or `?yoobstats=1` draws draw/frame/lip rates, the time inside each model, the
