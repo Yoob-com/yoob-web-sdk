@@ -2,6 +2,7 @@ import { isFeatherTalk } from '../../cdn';
 import { ConversationAudio } from '../audio/conversation-audio';
 import { RenderCoordinator, type RenderCoordinatorCallbacks } from './render-coordinator';
 import { FeatherCoordinator } from '../../feathertalk/coordinator';
+import type { IdleStill } from '../../feathertalk/idle';
 import type { StatsCollector } from '../../stats';
 
 /** Keeps the user-activated AudioContext while choosing the engine from the signed manifest. */
@@ -33,6 +34,8 @@ export class AvatarCoordinator {
     return this.renderer.appendStreamingAudio(response,pcm,final);
   }
   cancel():number{return this.renderer?.cancel()??0;}
+  /** The FeatherTalk resting face; the Luna renderer has an idle loop of its own and ignores it. */
+  setIdle(idle?:IdleStill):void{if(this.renderer instanceof FeatherCoordinator)this.renderer.setIdle(idle);}
   get playedAudioMs():number{return this.renderer?.playedAudioMs??0;}
   updateDownloadToken(token:string):void{this.renderer?.updateDownloadToken(token);}
   destroy():void{if(this.renderer)this.renderer.destroy();else this.audio.close();}

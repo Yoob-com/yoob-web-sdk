@@ -7,6 +7,7 @@ import type { RemoteAudioTrack } from "./engine/audio/conversation-audio";
 import { StatsCollector, type YoobStats } from "./stats";
 import { StatsOverlay } from "./stats-overlay";
 import { AvatarCoordinator } from "./engine/runtime/avatar-coordinator";
+import { IdleStill, type PackStill } from "./feathertalk/idle";
 import type { RendererSpatialContract } from "./engine/runtime/generated/runtime-tier-contract";
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
 
@@ -589,13 +590,26 @@ export class YoobAvatar {
     ));
     this.options.onProgress?.({ completedBytes: total, totalBytes: total, fraction: 1 });
     // Painted after initialize, which sizes the canvas and so clears it. The render loop draws neither speech frames
-    // nor an idle video while the character is resting, so this stays until it speaks.
+    // nor an idle video while the character is resting, so this stays until the resting face below takes over.
     if (this.still) {
       this.canvas.getContext("2d")?.drawImage(this.still, 0, 0, this.canvas.width, this.canvas.height);
+      // The pack's resting face: the still, blinking, and settled onto again after every reply. Small files, loaded
+      // behind `ready`; until they land (or if the pack describes no blink) the still above simply stays.
+      void this.restingFace(store, manifest).then((idle) => {
+        if (idle && this.coordinator === coordinator) coordinator.setIdle(idle);
+      }).catch(() => undefined);
     }
     this.canvas.style.opacity = "1";
     if (!this.monitor?.active) throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
     this.setPhase("ready");
+  }
+
+  /** A second-layout pack's blinking still (`pack.json` `still`), or undefined when it describes none. */
+  private async restingFace(store: ChunkStore, manifest: CharacterManifest): Promise<IdleStill | undefined> {
+    const packPath = manifest.runtime?.pack;
+    if (!packPath) return undefined;
+    const pack = JSON.parse(new TextDecoder().decode(await store.bytes(packPath))) as { still?: PackStill };
+    return IdleStill.load(pack.still, (path) => store.bytes(path), this.still);
   }
 
   private get cdnBase(): string {

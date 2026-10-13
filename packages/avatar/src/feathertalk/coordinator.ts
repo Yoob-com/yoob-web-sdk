@@ -2,6 +2,7 @@ import { ConversationAudio } from '../engine/audio/conversation-audio';
 import type { StatsCollector } from '../stats';
 import type { RuntimeAssetConfig } from '../engine/assets/runtime-store';
 import type { RenderCoordinatorCallbacks } from '../engine/runtime/render-coordinator';
+import type { IdleStill } from './idle';
 
 export class FeatherCoordinator {
   private worker=new Worker(new URL('./worker.ts',import.meta.url),{type:'module',name:'feathertalk'});
@@ -17,6 +18,8 @@ export class FeatherCoordinator {
   private initTimer?:ReturnType<typeof setTimeout>;
   /** Set when the integrator asked for stats. Undefined costs one property read per draw and nothing else. */
   stats?: StatsCollector;
+  /** The resting face of a pack with no idle loop (`./idle`), drawn whenever no speech frame is. */
+  private idle?: IdleStill;
   /** The highest frame index actually drawn, so a frame released above it is known to have been thrown away unseen. */
   private drawn=-1;
   /**
@@ -49,6 +52,7 @@ export class FeatherCoordinator {
     audio.onPlaybackDrained=t=>{
       if(t.epoch!==this.epoch)return;
       this.played=t.playedSamples;this.streaming=false;this.started=false;this.clearFrames();
+      this.idle?.enter(this.canvas,performance.now());
       void video.play().catch(()=>{});callbacks.onPlaybackEnded?.(this.epoch);
     };
   }
@@ -136,7 +140,7 @@ export class FeatherCoordinator {
       const index=Math.floor(this.played/960);
       const bitmap=this.frames.get(index);
       if(bitmap){
-        this.context.drawImage(bitmap,0,0);
+        this.context.drawImage(bitmap,0,0);this.idle?.invalidate();
         if(index>this.drawn)this.drawn=index;
         // The first picture of this reply reached the screen; measure it against the audio that caused it.
         if(this.stats){const lag=this.lipLatency(index);if(lag>0)this.stats.noteLipLatency(lag);}
@@ -145,6 +149,7 @@ export class FeatherCoordinator {
       // here because nothing else can see it — the draw simply does not happen.
       else this.stats?.noteHeld();
     }else if(this.video.readyState>=2){this.context.drawImage(this.video,0,0,this.canvas.width,this.canvas.height);}
+    else this.idle?.render(this.context,performance.now());
     this.stats?.noteDraw();
     this.callbacks.onFirstHostFrame?.(performance.now());
     this.animation=requestAnimationFrame(this.draw);
@@ -164,7 +169,11 @@ export class FeatherCoordinator {
     }
   }
   private clearFrames():void{for(const frame of this.frames.values())frame.close();this.frames.clear();}
+  /** Rest on `idle` (a pack's blinking still) instead of the last speech frame; shown at once. */
+  setIdle(idle?:IdleStill):void{this.idle=idle;idle?.enter(this.canvas,performance.now(),0);}
   cancel():number {
+    // An interrupted reply settles onto the resting face; a reply starting from rest has nothing to settle from.
+    if(this.started)this.idle?.enter(this.canvas,performance.now());
     this.epoch++;this.audio.clear(this.epoch);this.worker.postMessage({type:'begin',epoch:this.epoch});
     this.response='';this.played=0;this.received=0;this.queuedSamples=0;this.finalReceived=false;
     this.arrivals=[];this.drawn=-1;this.stats?.noteReplyEnded();
