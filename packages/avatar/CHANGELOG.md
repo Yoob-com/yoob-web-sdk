@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+
+- A GPT-Live character rests between replies instead of mouthing the silence. GPT-Live never stops sending: it streams
+  continuously and fills the gaps with zeroes, and all of it was reaching the renderer, so the head and lips moved for
+  as long as a call lasted and the idle loop never got a turn. Audio now reaches the renderer while the voice is
+  audible and for 400 ms after, so the quiet inside a sentence still carries the clock and the quiet between replies
+  does not.
+
 ## 0.8.0
 
 - A FeatherTalk pack with no idle loop now rests on its own blinking still instead of freezing on the last speech

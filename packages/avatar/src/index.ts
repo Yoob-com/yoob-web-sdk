@@ -25,7 +25,7 @@ export {
 } from "./gemini-conversation";
 // From the root, not a separate entry: unlike the LiveKit path this needs nothing but the browser's own WebRTC.
 export {
-  YoobWebRTCConversation, isAllowedLiveUrl, DEFAULT_LIVE_HOSTS,
+  YoobWebRTCConversation, SpeechGate, isAllowedLiveUrl, DEFAULT_LIVE_HOSTS,
   type YoobWebRTCConversationOptions, type YoobLiveAnswer,
 } from "./webrtc-conversation";
 export { PcmResampler } from "./resampler";

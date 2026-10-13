@@ -78,6 +78,51 @@ export function isAllowedLiveUrl(value: string, hosts: string[] = DEFAULT_LIVE_H
     : url.hostname === host));
 }
 
+/**
+ * Below this, a sample is the model's own silence rather than its voice.
+ *
+ * GPT-Live does not stop sending between turns: it streams a continuous 24 kHz stream and fills the gaps with zeroes.
+ * Measured against the live API, 95% of the audio arriving while nobody is talking peaks at 1. Handing that to the
+ * renderer makes the character mouth silence for as long as the call lasts, and the idle loop never gets a turn —
+ * which is what "the avatar moves its head and lips before we start to talk" is.
+ *
+ * The same threshold the voice agent uses to decide when the model has the floor.
+ */
+const AUDIBLE_PEAK = 48;
+/**
+ * How long after the last audible sample the voice still counts as speaking.
+ *
+ * Long enough to carry the pause between two sentences, so a reply is not chopped into pieces, and short enough that
+ * the character settles back to rest promptly once it has finished.
+ */
+const SPEECH_TAIL_MS = 400;
+
+/**
+ * Decides which audio is the character talking and which is the gap between turns.
+ *
+ * Silence is not dropped sample by sample: the quiet inside a sentence has to reach the renderer or the mouth loses
+ * the clock, so once a sound is heard everything keeps flowing until the voice has been quiet for `tailMs`. What is
+ * dropped is the long silence between replies, and dropping it is what lets the renderer run dry and the idle loop
+ * come back.
+ */
+export class SpeechGate {
+  private until = 0;
+  constructor(private readonly peak = AUDIBLE_PEAK, private readonly tailMs = SPEECH_TAIL_MS) {}
+
+  accepts(pcm: Int16Array, now: number): boolean {
+    let loudest = 0;
+    for (let i = 0; i < pcm.length; i += 1) {
+      const level = Math.abs(pcm[i]);
+      if (level > loudest) loudest = level;
+    }
+    if (loudest >= this.peak) {
+      this.until = now + this.tailMs;
+      return true;
+    }
+    return now < this.until;
+  }
+}
+
 /** The label the model expects; it must exist in the offer. */
 const EVENTS_CHANNEL = "oai-events";
 /** Long enough for a slow network to finish gathering, short enough not to look hung. */
@@ -97,6 +142,7 @@ export class YoobWebRTCConversation {
   #state: ConversationState = "idle";
   #starting = false;
   #closing = false;
+  #gate = new SpeechGate();
 
   constructor(private readonly avatar: YoobAvatar, private readonly options: YoobWebRTCConversationOptions) {}
 
@@ -224,12 +270,12 @@ export class YoobWebRTCConversation {
     return { sdp: body?.sdp ?? "" };
   }
 
-  /** Her voice, straight into the character. */
+  /** Her voice, straight into the character — and only her voice. */
   async #listen(stream: MediaStream): Promise<void> {
     if (this.#closing) return;
     this.#untap?.();
     this.#untap = await this.avatar.attachMediaStream(stream, (pcm) => {
-      if (!this.#closing) this.avatar.speak(pcm);
+      if (!this.#closing && this.#gate.accepts(pcm, performance.now())) this.avatar.speak(pcm);
     });
   }
 
