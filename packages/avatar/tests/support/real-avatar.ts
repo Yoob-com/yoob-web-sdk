@@ -243,3 +243,21 @@ export async function settle(rounds = 20): Promise<void> {
 
 /** 20 ms of audible 24 kHz speech. */
 export const speech = (level = 4000): Int16Array => new Int16Array(480).fill(level);
+
+type Timers = { mock: { timers: { tick: (ms: number) => void } } };
+
+/**
+ * The ways an avatar's session ends underneath a conversation: Yoob refusing the next heartbeat (out of credit), and
+ * the app destroying the avatar. Each takes a started conversation's harness and ends the session.
+ */
+export const sessionEndings: Array<[string, (h: Harness, t: Timers) => Promise<void>]> = [
+  ["the workspace runs out of credit", async (h, t) => {
+    h.api.heartbeatReplies.push({ status: 402, body: { code: "quota_exceeded" } });
+    t.mock.timers.tick(15_000);
+    await settle();
+  }],
+  ["the avatar is destroyed", async (h) => {
+    await h.avatar.destroy();
+    await settle();
+  }],
+];

@@ -53,6 +53,7 @@ export class YoobLiveConversation {
   #session?: YoobLiveKitSession;
   #state: ConversationState = "idle";
   #attempt = 0;
+  #unwatchSession?: () => void;
 
   constructor(private readonly avatar: YoobAvatar, private readonly options: YoobLiveConversationOptions) {}
 
@@ -74,6 +75,13 @@ export class YoobLiveConversation {
     const attempt = ++this.#attempt;
     const cancelled = () => attempt !== this.#attempt;
     this.#setState("connecting");
+    // Leave the room when the avatar's session ends (no credit, refused, the avatar destroyed). The room is what keeps
+    // the agent — and the model behind it — running, so it must not outlive the session that pays for it.
+    this.#unwatchSession = this.avatar.onSessionEnd((error) => {
+      if (cancelled()) return;
+      void this.stop();
+      if (error) this.options.onError?.(error);
+    });
 
     const room = new Room();
     this.#room = room;
@@ -110,10 +118,13 @@ export class YoobLiveConversation {
 
   /**
    * Ends the conversation, leaves the room and ends the metered session, so nothing is billed past this point. The
-   * character stays on screen; `start()` opens a fresh session. Safe to call while `start()` is still running.
+   * character stays on screen; `start()` opens a fresh session. Safe to call while `start()` is still running. The
+   * conversation also stops itself this way when the avatar's session ends or the avatar is destroyed.
    */
   async stop(): Promise<void> {
     this.#attempt += 1;
+    this.#unwatchSession?.();
+    this.#unwatchSession = undefined;
     const room = this.#room;
     const session = this.#session;
     this.#room = undefined;

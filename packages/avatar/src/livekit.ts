@@ -85,6 +85,7 @@ export class YoobLiveKitSession {
   private readonly offs: Array<() => void> = [];
   private running = false;
   private publishedMicrophone = false;
+  private unwatchSession?: () => void;
   // Utterance segmentation.
   private open = false;
   private suppressed = false;
@@ -109,6 +110,13 @@ export class YoobLiveKitSession {
     if (this.running) return;
     this.running = true;
     this.setState("connecting");
+    // Stop with the avatar's session (no credit, refused, the avatar destroyed): the microphone this session
+    // published must not stay on the call after the character has stopped.
+    this.unwatchSession = this.avatar.onSessionEnd((error) => {
+      if (!this.running) return;
+      void this.stop();
+      if (error) this.options.onError?.(error);
+    });
     const { room } = this.options;
     try {
       // Resume audio while the click still counts as a user gesture, then finish loading.
@@ -165,6 +173,8 @@ export class YoobLiveKitSession {
   async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
+    this.unwatchSession?.();
+    this.unwatchSession = undefined;
     for (const off of this.offs.splice(0)) off();
     this.closeUtterance(true);
     this.releaseTrack();

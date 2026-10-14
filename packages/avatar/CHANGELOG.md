@@ -37,6 +37,20 @@
   Behaviour change: code that kept calling `speak()` after a conversation's `stop()` (or after `endSession()`) now
   gets an exception; `YoobLiveKitSession` reports it through `onError`.
 
+- Every conversation class hangs up when its avatar's session ends — Yoob stopping it (no credit, refused,
+  unreachable), `avatar.endSession()`, or `avatar.destroy()`. The avatar stopped rendering, but the conversation's own
+  connection lived on: `YoobWebRTCConversation` kept its microphone and peer connection open, so in full mode GPT-Live
+  went on running on Yoob's OpenAI account; `YoobLiveConversation` stayed in the room, keeping its agent and model
+  running; `YoobConversation` and `YoobGeminiConversation` kept their sockets open. Each now goes to `ended`, releases
+  everything, and passes Yoob's reason to its `onError`. New: `avatar.onSessionEnd(listener)`, which they use.
+
+- `avatar.destroy()` no longer throws when the microphone is live. It marked the avatar destroyed before stopping the
+  microphone, whose audio graph then refused it, so `destroy()` rejected before it had ended the session or released
+  the renderer.
+
+- A `YoobWebRTCConversation` stopped while `start()` was waiting on the backend can be started again. The cancelled
+  start left an internal flag set, and every later `start()` returned without doing anything.
+
 ## 0.12.0
 
 - The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the

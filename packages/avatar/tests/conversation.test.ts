@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { YoobConversation, isAllowedVoiceUrl, voiceCloseError, type YoobVoiceSession } from "../src/conversation";
 import { YoobError } from "../src/cdn";
 import type { YoobAvatar } from "../src/index";
+import { realAvatar, sessionEndings } from "./support/real-avatar";
 
 class FakeSocket {
   static OPEN = 1;
@@ -35,6 +36,7 @@ function fakeAvatar() {
     unlockAudio: async () => undefined,
     startMetering: async () => { calls.push("meter-start"); await meter(); },
     endSession: async () => { calls.push("meter-end"); },
+    onSessionEnd: () => () => undefined,
     speak: (pcm: Int16Array) => { calls.push(`speak:${pcm.length}`); heard = 1234; },
     endSpeech: () => calls.push("end"),
     interrupt: () => { calls.push("interrupt"); const h = heard; heard = 0; return h; },
@@ -329,3 +331,21 @@ test("stop() ends the metered session so nothing accrues afterwards", async () =
   assert.ok(calls.includes("meter-end"));
   assert.equal(convo.state, "ended");
 });
+
+for (const [ending, end] of sessionEndings) {
+  test(`a Realtime conversation hangs up when ${ending}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const h = realAvatar();
+    const errors: string[] = [];
+    const convo = new YoobConversation(h.avatar, { getVoiceSession: voiceSession(), onError: (e) => errors.push(e.code) });
+    await convo.start();
+    const socket = FakeSocket.last!;
+
+    await end(h, t);
+    assert.equal(convo.state, "ended");
+    assert.equal(socket.readyState, 3, "the voice socket is closed");
+    assert.equal(h.avatar.renderer.audio.microphoneOpen, false);
+    if (ending.includes("credit")) assert.deepEqual(errors, ["out-of-credit"]);
+    else assert.deepEqual(errors, []);
+  });
+}

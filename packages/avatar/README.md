@@ -70,6 +70,11 @@ refuses the session or its API key was revoked, or `session-ended` when a sandbo
 the workspace is suspended, or when Yoob can't be reached for the whole outage grace window (`error.details.reason` is
 `unreachable`). `speak()` then throws the same error. Call `prepare()` to open a new session.
 
+A conversation running on the avatar ends with its session: whichever class it is, it hangs up (state `ended`; the
+microphone, socket, peer connection or LiveKit room released) and its own `onError` receives the same error. The same
+happens, without an error, when the app calls `avatar.destroy()` or `avatar.endSession()`.
+`avatar.onSessionEnd(listener)` lets your own code do likewise; it returns a function that removes the listener.
+
 If heartbeats get no answer (network errors, timeouts, 408, 429, 5xx), the character keeps rendering while the SDK
 retries (after 2 s, 6 s, then every 15 s). `onHeartbeatDegraded(detail)` fires when that starts and
 `onHeartbeatRecovered()` when a heartbeat succeeds again. The character stops only once

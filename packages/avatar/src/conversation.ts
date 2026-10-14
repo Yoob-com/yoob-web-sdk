@@ -161,6 +161,7 @@ export class YoobConversation {
   private closing = false;
   private starting = false;
   private closeFailure?: YoobError;
+  private unwatchSession?: () => void;
 
   constructor(private readonly avatar: YoobAvatar, private readonly options: YoobConversationOptions) {
     if (!options.getVoiceSession === !options.getClientSecret) {
@@ -179,6 +180,9 @@ export class YoobConversation {
     this.starting = true;
     this.closeFailure = undefined;
     this.setState("connecting");
+    // The session that pays for this conversation can end under it (no credit, refused, the avatar destroyed): hang
+    // up with it rather than keep the socket and the microphone open on a character that has stopped.
+    this.unwatchSession = this.avatar.onSessionEnd((error) => this.endWithSession(error));
     try {
       await this.avatar.prepare();
       await this.avatar.unlockAudio();
@@ -205,10 +209,12 @@ export class YoobConversation {
       // before any of it happens.
       await this.avatar.startMetering();
       this.starting = false;
+      if (this.closing) return; // stopped while the meter was starting; stop() has ended the session.
       this.setState("listening");
       if (this.options.greet) this.send({ type: "response.create" });
     } catch (error) {
       this.starting = false;
+      if (this.closing) return; // stop() already tore down, and said why if there was a reason to.
       const failure = error instanceof YoobError ? error : new YoobError("network", errorText(error));
       this.stop();
       this.options.onError?.(failure);
@@ -234,6 +240,8 @@ export class YoobConversation {
    */
   stop(): void {
     this.closing = true;
+    this.unwatchSession?.();
+    this.unwatchSession = undefined;
     for (const off of this.unsubscribe.splice(0)) off();
     this.avatar.microphone.stop();
     this.avatar.interrupt();
@@ -243,6 +251,13 @@ export class YoobConversation {
     this.activeResponse = undefined;
     this.playingItem = undefined;
     this.setState("ended");
+  }
+
+  /** The avatar's session ended under the conversation: hang up, and pass on Yoob's reason if it gave one. */
+  private endWithSession(error?: YoobError): void {
+    if (this.closing) return;
+    this.stop();
+    if (error) this.options.onError?.(error);
   }
 
   private open(url: string, protocols: string[], service: string): Promise<void> {

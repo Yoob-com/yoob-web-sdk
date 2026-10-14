@@ -89,6 +89,7 @@ export class YoobGeminiConversation {
   private assistantText = "";
   private closing = false;
   private playbackWatch?: ReturnType<typeof setInterval>;
+  private unwatchSession?: () => void;
 
   constructor(private readonly avatar: YoobAvatar, private readonly options: YoobGeminiConversationOptions) {}
 
@@ -100,6 +101,12 @@ export class YoobGeminiConversation {
     this.closing = false;
     this.downsampler = new PcmResampler(OUTPUT_RATE, INPUT_RATE);
     this.setState("connecting");
+    // Hang up with the session that pays for this: no credit, refused, or the avatar destroyed.
+    this.unwatchSession = this.avatar.onSessionEnd((error) => {
+      if (this.closing) return;
+      this.stop();
+      if (error) this.options.onError?.(error);
+    });
     try {
       await this.avatar.prepare();
       await this.avatar.unlockAudio();
@@ -152,6 +159,8 @@ export class YoobGeminiConversation {
    */
   stop(): void {
     this.closing = true;
+    this.unwatchSession?.();
+    this.unwatchSession = undefined;
     this.stopPlaybackWatch();
     for (const off of this.unsubscribe.splice(0)) off();
     this.avatar.microphone.stop();

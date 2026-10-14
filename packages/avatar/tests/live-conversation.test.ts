@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { YoobLiveConversation } from "../src/livekit";
-import { realAvatar, settle, type Harness } from "./support/real-avatar";
+import { realAvatar, sessionEndings, settle, type Harness } from "./support/real-avatar";
 import { fakeLiveKit } from "./support/fake-livekit";
 
 const room = { url: "wss://agents.test", token: "lk_token" };
@@ -98,3 +98,23 @@ test("a LiveKit session in the app's own room ends the meter it started, on stop
   assert.deepEqual(h.api.calls("end").map((r) => r.token), ["st_1", "st_2"], "a dropped room ends it too");
   assert.equal(await heartbeatsInAMinute(t, h), 0);
 });
+
+for (const [ending, end] of sessionEndings) {
+  test(`a LiveKit conversation leaves the room when ${ending}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const livekit = fakeLiveKit();
+    t.after(() => livekit.restore());
+    const h = realAvatar();
+    const errors: string[] = [];
+    const convo = new YoobLiveConversation(h.avatar, { getLiveSession: async () => room, onError: (e) => errors.push(e.code) });
+    await convo.start();
+    assert.equal(livekit.connected, true);
+
+    await end(h, t);
+    assert.equal(convo.state, "ended");
+    assert.equal(livekit.connected, false, "the room is left, so the agent ends the model session");
+    assert.equal(livekit.microphone, false);
+    if (ending.includes("credit")) assert.deepEqual(errors, ["out-of-credit"]);
+    else assert.deepEqual(errors, []);
+  });
+}

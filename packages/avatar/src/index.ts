@@ -247,6 +247,7 @@ export class YoobAvatar {
    */
   private sessionClosed = false;
   private stopListeners: Array<(error: YoobError) => void> = [];
+  private sessionEndListeners = new Set<(error?: YoobError) => void>();
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
   /** The resting picture for a character that ships no idle loop; drawn once, then left alone. */
   private still?: ImageBitmap;
@@ -469,11 +470,37 @@ export class YoobAvatar {
     this.stopHeartbeat();
     this.credentials = undefined;
     this.metering = undefined;
+    this.notifySessionEnd();
     if (!credentials) return;
     // A start still in flight would land after the end and leave the meter running on the server, so the end waits
     // for it. A start that fails needs no end, but ending a session twice is harmless and this one is ended anyway.
     await metering?.catch(() => undefined);
     await endSessionOnApi(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
+  }
+
+  /**
+   * Calls `listener` when this avatar's session is over: Yoob ended it (`error` says why: no credit, refused, or
+   * unreachable), the app ended it with `endSession()`, or the avatar was destroyed. Returns a function that removes
+   * the listener.
+   *
+   * Conversations use it to hang up with the session. Nothing about a conversation's own connection — the voice
+   * socket, the peer connection, the LiveKit room, the microphone — goes away when the character stops rendering, so
+   * without this a conversation would keep running, and in full mode keep running on Yoob's voice account, after
+   * the session that pays for it had ended.
+   */
+  onSessionEnd(listener: (error?: YoobError) => void): () => void {
+    this.sessionEndListeners.add(listener);
+    return () => { this.sessionEndListeners.delete(listener); };
+  }
+
+  private notifySessionEnd(error?: YoobError): void {
+    for (const listener of [...this.sessionEndListeners]) {
+      try {
+        listener(error);
+      } catch {
+        // One listener's failure must not keep the others from hearing that the session ended.
+      }
+    }
   }
 
   /** A new session for a character that is already downloaded and rendering. */
@@ -490,17 +517,21 @@ export class YoobAvatar {
   /** Ends the metered session and removes the character from the page. Downloaded files stay cached. */
   async destroy(): Promise<void> {
     if (this.destroyed) return;
+    // Before `destroyed` is set: the microphone reaches the audio graph through engine(), which refuses once it is,
+    // and a throw here would leave the renderer running and the session open.
+    this.microphone.stop();
     this.destroyed = true;
     const credentials = this.credentials;
     this.stopHeartbeat();
     this.stopStats();
-    this.microphone.stop();
     this.coordinator?.destroy();
     this.coordinator = undefined;
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.root.remove();
     this.credentials = undefined;
     this.metering = undefined;
+    this.notifySessionEnd();
+    this.sessionEndListeners.clear();
     if (credentials) await endSessionOnApi(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
     this.setPhase("not-prepared");
   }
@@ -831,6 +862,7 @@ export class YoobAvatar {
     this.video.load();
     this.setPhase("stopped");
     for (const listener of this.stopListeners.splice(0)) listener(error);
+    this.notifySessionEnd(error);
     this.options.onSessionEnded?.(error);
     this.options.onError?.(error);
   }

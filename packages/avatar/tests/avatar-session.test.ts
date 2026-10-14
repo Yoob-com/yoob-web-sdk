@@ -53,3 +53,15 @@ test("speak() after the session was ended refuses rather than render unmetered, 
   assert.ok(avatar.renderer.rendered.length > rendered);
   assert.deepEqual(api.calls("start").map((r) => r.token), ["st_1", "st_2"]);
 });
+
+test("destroy() with the microphone live still ends the session", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const { avatar, api } = realAvatar();
+  await avatar.prepare();
+  await avatar.microphone.start();
+  await avatar.startMetering();
+  await avatar.destroy();
+  assert.deepEqual(api.calls("end").map((r) => r.token), ["st_1"]);
+  assert.equal(avatar.renderer.destroyed, true);
+  assert.equal(avatar.renderer.audio.microphoneOpen, false);
+});

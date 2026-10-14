@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { GEMINI_LIVE_URL, YoobGeminiConversation } from "../src/gemini-conversation";
 import { YoobError } from "../src/cdn";
 import type { YoobAvatar } from "../src/index";
-import { realAvatar, settle } from "./support/real-avatar";
+import { realAvatar, sessionEndings, settle } from "./support/real-avatar";
 
 type Message = Record<string, any>;
 
@@ -47,6 +47,7 @@ function fakeAvatar() {
     unlockAudio: async () => undefined,
     startMetering: async () => { calls.push("meter-start"); },
     endSession: async () => { calls.push("meter-end"); },
+    onSessionEnd: () => () => undefined,
     speak: (pcm: Int16Array) => { calls.push(`speak:${pcm.length}`); spoken.push(pcm); avatar.phase = "speaking"; },
     endSpeech: () => calls.push("end"),
     interrupt: () => { calls.push("interrupt"); avatar.phase = "ready"; return 0; },
@@ -301,3 +302,21 @@ test("stop() while a Gemini start() is fetching its token leaves no socket, micr
   assert.equal(h.api.calls("start").length, 0, "nothing was metered");
   assert.equal(convo.state, "ended");
 });
+
+for (const [ending, end] of sessionEndings) {
+  test(`a Gemini conversation hangs up when ${ending}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const h = realAvatar();
+    const errors: string[] = [];
+    const convo = new YoobGeminiConversation(h.avatar, { getToken: async () => "auth_tokens/x", onError: (e) => errors.push(e.code) });
+    await convo.start();
+    const socket = FakeSocket.last!;
+
+    await end(h, t);
+    assert.equal(convo.state, "ended");
+    assert.equal(socket.readyState, 3, "the socket to Gemini is closed");
+    assert.equal(h.avatar.renderer.audio.microphoneOpen, false);
+    if (ending.includes("credit")) assert.deepEqual(errors, ["out-of-credit"]);
+    else assert.deepEqual(errors, []);
+  });
+}

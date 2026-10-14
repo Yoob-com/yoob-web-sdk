@@ -164,9 +164,10 @@ export class YoobWebRTCConversation {
   #untap?: () => void;
   #microphone?: MediaStream;
   #state: ConversationState = "idle";
-  #starting = false;
+  #attempt = 0;
   #closing = false;
   #gate = new SpeechGate();
+  #unwatchSession?: () => void;
 
   constructor(private readonly avatar: YoobAvatar, private readonly options: YoobWebRTCConversationOptions) {}
 
@@ -176,10 +177,21 @@ export class YoobWebRTCConversation {
 
   /** Opens the connection and starts listening. Call from a click: it asks for the microphone and unlocks sound. */
   async start(): Promise<void> {
-    if (this.#pc || this.#starting) return;
-    this.#starting = true;
+    if (this.#pc) return; // already started, or starting
+    // Every await below is a point where stop() may have run. Each start is an attempt that stop() supersedes, and a
+    // superseded attempt gives back whatever it just acquired and leaves.
+    const attempt = ++this.#attempt;
+    const cancelled = () => attempt !== this.#attempt;
     this.#closing = false;
     this.#setState("connecting");
+    // Hang up with the session that pays for this. In full mode the model runs on Yoob's OpenAI account, so a peer
+    // connection that outlived its session — out of credit, refused, the avatar destroyed — would be a conversation
+    // nobody is paying for.
+    this.#unwatchSession = this.avatar.onSessionEnd((error) => {
+      if (this.#closing) return;
+      void this.stop();
+      if (error) this.options.onError?.(error);
+    });
 
     const pc = new RTCPeerConnection();
     this.#pc = pc;
@@ -188,15 +200,16 @@ export class YoobWebRTCConversation {
       const unlocked = this.avatar.unlockAudio();
       await this.avatar.prepare();
       await unlocked;
+      if (cancelled()) return;
 
       // The channel is created before the offer so the offer carries an m=application section, which the model
       // requires. Its events are the only ones that cross it: audio rides the media tracks.
       this.#channel = pc.createDataChannel(EVENTS_CHANNEL);
       this.#channel.onmessage = (event) => this.#event(event.data);
 
-      pc.ontrack = (event) => void this.#listen(event.streams[0] ?? new MediaStream([event.track]));
+      pc.ontrack = (event) => { if (!cancelled()) void this.#listen(event.streams[0] ?? new MediaStream([event.track])); };
       pc.onconnectionstatechange = () => {
-        if (this.#closing) return;
+        if (this.#closing || cancelled()) return;
         if (pc.connectionState === "connected") this.#setState("listening");
         if (pc.connectionState === "failed") this.#fail(new YoobError("network", "The conversation disconnected."));
       };
@@ -206,24 +219,30 @@ export class YoobWebRTCConversation {
         // needs, and here the track goes to the model as media. The shared helper carries the same constraints --
         // echo cancellation above all, since the model hears itself through the speakers otherwise.
         const opened = await openPreferredMicrophone(navigator.mediaDevices, null);
+        if (cancelled()) {
+          // stop() ran while the permission prompt was open: give the device straight back.
+          opened.stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         this.#microphone = opened.stream;
         for (const track of opened.stream.getAudioTracks()) pc.addTrack(track, opened.stream);
       }
 
       await pc.setLocalDescription(await pc.createOffer());
       await this.#gathered(pc);
-      if (this.#closing) return;
+      if (cancelled()) return;
 
       const answer = await this.#answer(pc.localDescription!.sdp);
-      if (this.#closing) return;
+      if (cancelled()) return;
       if (!answer?.sdp) throw new YoobError("unsupported", "The backend returned no SDP answer.");
       await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
+      if (cancelled()) return;
 
-      // The connection is live and the character can hear: this is the session the user is paying for.
+      // The connection is live and the character can hear: this is the session the user is paying for. A stop()
+      // while this is in flight ends the session once the request has answered (see `avatar.endSession()`).
       if (this.options.meter ?? true) await this.avatar.startMetering();
-      this.#starting = false;
     } catch (error) {
-      this.#starting = false;
+      if (cancelled()) return; // stop() already tore down, and said why if there was a reason to.
       const failure = error instanceof YoobError ? error : new YoobError("network", message(error));
       void this.stop();
       this.options.onError?.(failure);
@@ -232,7 +251,9 @@ export class YoobWebRTCConversation {
   }
 
   /**
-   * Ends the conversation and releases the microphone. The character stays on screen.
+   * Ends the conversation, releases the microphone and ends the metered session. The character stays on screen. The
+   * conversation also stops itself this way when the avatar's session ends or the avatar is destroyed. Safe to call
+   * while `start()` is still running.
    *
    * Async to match `YoobLiveConversation.stop()`, so an app can swap one transport for the other without changing
    * how it tears down -- and so the metered session is known to be closed when this resolves, rather than merely
@@ -240,6 +261,9 @@ export class YoobWebRTCConversation {
    */
   async stop(): Promise<void> {
     this.#closing = true;
+    this.#attempt += 1;
+    this.#unwatchSession?.();
+    this.#unwatchSession = undefined;
     this.#untap?.();
     this.#untap = undefined;
     this.#microphone?.getTracks().forEach((track) => track.stop());

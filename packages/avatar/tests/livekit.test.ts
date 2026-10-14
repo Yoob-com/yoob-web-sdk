@@ -85,6 +85,7 @@ function fakeAvatar() {
       if (meterFails) throw meterFails;
     },
     endSession: async () => { calls.push("end-session"); },
+    onSessionEnd: () => () => undefined,
     speak: (pcm: Int16Array) => calls.push(`speak:${tags.get(pcm)}`),
     endSpeech: () => calls.push("end"),
     interrupt: () => { calls.push("interrupt"); return 0; },
