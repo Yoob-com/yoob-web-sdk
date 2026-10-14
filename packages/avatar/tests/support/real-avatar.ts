@@ -203,8 +203,10 @@ export class TestAvatar extends YoobAvatar {
 export interface Harness {
   avatar: TestAvatar;
   api: FakeApi;
-  /** How many sessions `getCredentials()` has opened. Session n has token `st_n`. */
+  /** How many times `getCredentials()` was called. The session from call n has token `st_n`. */
   readonly opened: number;
+  /** Makes the next `getCredentials()` call throw `error`, as a backend that is down or refusing would. */
+  failNextOpen(error: Error): void;
   errors: Array<{ code: string; message: string }>;
   ended: Array<{ code: string; message: string }>;
   phases: string[];
@@ -215,6 +217,7 @@ export function realAvatar(options: Partial<YoobAvatarOptions> = {}, credentials
   installBrowser();
   const api = new FakeApi();
   let opened = 0;
+  let openFailure: Error | undefined;
   const errors: Harness["errors"] = [];
   const ended: Harness["ended"] = [];
   const phases: string[] = [];
@@ -223,6 +226,11 @@ export function realAvatar(options: Partial<YoobAvatarOptions> = {}, credentials
     character: "test-character",
     getCredentials: async () => {
       opened += 1;
+      if (openFailure) {
+        const failure = openFailure;
+        openFailure = undefined;
+        throw failure;
+      }
       return {
         session_token: `st_${opened}`, download_token: `dl_${opened}`, api_base: "https://console.test",
         heartbeat_seconds: 15, ...credentials,
@@ -233,7 +241,10 @@ export function realAvatar(options: Partial<YoobAvatarOptions> = {}, credentials
     onPhase: (phase) => phases.push(phase),
     ...options,
   });
-  return { avatar, api, get opened() { return opened; }, errors, ended, phases };
+  return {
+    avatar, api, get opened() { return opened; }, errors, ended, phases,
+    failNextOpen: (error) => { openFailure = error; },
+  };
 }
 
 /** Lets promise chains and immediate callbacks settle. Timers do not move: tests mock them and tick explicitly. */

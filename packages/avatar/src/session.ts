@@ -4,7 +4,10 @@ import { SDK_VERSION, YoobError } from "./cdn";
 /** What `POST /api/v1/sessions/heartbeat` returns. Fields the SDK doesn't know are ignored. */
 export interface HeartbeatReply {
   stop?: boolean;
-  /** Why the session stopped: `out-of-credits`, `sandbox-limit`, `suspended`, `key-revoked`, `abandoned`, `ended`. */
+  /**
+   * Why the session stopped: `out-of-credits`, `sandbox-limit`, `suspended`, `key-revoked`, `abandoned`, `ended`, or
+   * `unmetered` (open two minutes without the meter starting; see `SessionMonitorOptions.onDormant`).
+   */
   reason?: string | null;
   /** Detail for some reasons, for example `monthly_cap_reached`. */
   code?: string | null;
@@ -38,6 +41,19 @@ function terminalStop(reason: string | null | undefined): YoobError | undefined 
   }
 }
 
+/** The heartbeat `reason` for a session the API closed because its meter never started. */
+export const UNMETERED = "unmetered";
+
+/**
+ * What a session that could not be replaced ends with: the backend's own `out-of-credit` when that is why, and
+ * otherwise a plain `session-ended`. Shared by renewal here and by the avatar reopening a dormant session, so the
+ * app sees one failure whichever path found it.
+ */
+export function renewalFailure(error: unknown): YoobError {
+  if (error instanceof YoobError && error.code === "out-of-credit") return error;
+  return new YoobError("session-ended", "The Yoob session ended and a new one couldn't be opened.");
+}
+
 export interface SessionMonitorOptions {
   /** Where heartbeats go, for example `https://api2.yoob.com`. Read before every beat. */
   apiBase: () => string;
@@ -53,6 +69,12 @@ export interface SessionMonitorOptions {
   onGrant: (grant: string, expiresAt?: string | number) => void;
   /** The session can't continue. Called once; the monitor has stopped. */
   onEnded: (error: YoobError) => void;
+  /**
+   * The API closed the session because it was open two minutes without the meter starting (`reason: "unmetered"`).
+   * Not a failure, and not a reason to open a new session at once — an idle page doing that would open one every two
+   * minutes. The monitor has stopped; the owner reopens a session when someone actually starts talking.
+   */
+  onDormant?: () => void;
   /**
    * How long the session keeps running while heartbeats can't get an answer (network errors, timeouts, 408, 429, 5xx,
    * unreadable replies), counted from the last successful heartbeat. When it runs out the session ends as
@@ -177,7 +199,7 @@ export class SessionMonitor {
         case "fatal":
           return this.end(outcome.error);
         case "gone":
-          return this.renew("The Yoob session ended and a new one couldn't be opened.");
+          return this.renew();
         case "transient": {
           this.failures += 1;
           const remaining = anchor + this.graceMs - this.now();
@@ -209,19 +231,24 @@ export class SessionMonitor {
     if (!reply.stop) return;
     const terminal = terminalStop(reply.reason);
     if (terminal) return this.end(terminal);
+    if (reply.reason === UNMETERED) {
+      if (!this.running) return;
+      this.stop();
+      this.options.onDormant?.();
+      return;
+    }
     // The API ended the session because it went quiet (a sleeping laptop): open a new one through the backend.
-    return this.renew("The Yoob session ended and a new one couldn't be opened.");
+    return this.renew();
   }
 
-  private async renew(message: string): Promise<void> {
+  private async renew(): Promise<void> {
     const generation = this.generation;
     try {
       await this.options.renew();
       if (generation === this.generation) this.succeeded();
     } catch (error) {
       if (generation !== this.generation) return;
-      const cause = error instanceof YoobError && error.code === "out-of-credit" ? error : undefined;
-      this.end(cause ?? new YoobError("session-ended", message));
+      this.end(renewalFailure(error));
     }
   }
 

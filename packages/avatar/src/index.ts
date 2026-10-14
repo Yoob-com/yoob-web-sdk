@@ -13,7 +13,7 @@ import type { RendererSpatialContract } from "./engine/runtime/generated/runtime
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
 
 import { YoobMicrophone } from "./microphone";
-import { SessionMonitor, endSession as endSessionOnApi, startSession } from "./session";
+import { SessionMonitor, endSession as endSessionOnApi, renewalFailure, startSession } from "./session";
 
 export { YoobError, type CharacterManifest };
 export { YoobMicrophone, type MicrophoneOption, type MicrophoneState, type MicrophoneEvents } from "./microphone";
@@ -246,6 +246,14 @@ export class YoobAvatar {
    * opens a new session.
    */
   private sessionClosed = false;
+  /**
+   * Yoob closed the session because it was open two minutes without the meter starting. Nothing is wrong: the
+   * character stays on screen with everything it loaded, and nothing beats. The next `startMetering()` — or
+   * `prepare()`, or the first word of `speak()` — opens a new session first, through `getCredentials()`.
+   */
+  private dormant = false;
+  /** The one reopen of a dormant session that every caller waiting on it shares. */
+  private waking?: Promise<void>;
   private stopListeners: Array<(error: YoobError) => void> = [];
   private sessionEndListeners = new Set<(error?: YoobError) => void>();
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
@@ -329,6 +337,7 @@ export class YoobAvatar {
       // Already on screen. If its session was ended (the last conversation stopped), open a new one rather than
       // download and warm a character that is sitting right there.
       if (this.credentials) return Promise.resolve();
+      if (this.dormant) return this.wake();
       this.preparing ??= this.reopenSession().finally(() => { this.preparing = undefined; });
       return this.preparing;
     }
@@ -364,9 +373,18 @@ export class YoobAvatar {
    *
    * Idempotent: later calls return the same promise and never restart the clock. It rejects if Yoob won't start the
    * session — no credit, a revoked key, a used-up free allowance — and the conversation should not go ahead.
+   *
+   * Yoob closes a session that has not started metering within two minutes of opening. The character stays on screen,
+   * and this opens a new session through `getCredentials()` before starting the meter, so a page that waited a while
+   * before anyone spoke needs nothing special. If that new session can't be opened, the avatar stops exactly as it
+   * does when a renewal fails (`onSessionEnded`, phase `stopped`) and this rejects with the same error.
    */
   startMetering(): Promise<void> {
     if (this.metering) return this.metering;
+    if (!this.credentials && this.dormant) {
+      // Yoob closed the unmetered session; the user has now started talking, so open a new one and meter that.
+      return this.wake().then(() => this.startMetering());
+    }
     const credentials = this.credentials;
     if (!credentials) {
       return Promise.reject(new YoobError("session-ended", "There is no Yoob session to meter. Call prepare() first."));
@@ -467,6 +485,7 @@ export class YoobAvatar {
     const credentials = this.credentials;
     const metering = this.metering;
     this.sessionClosed = true;
+    this.dormant = false;
     this.stopHeartbeat();
     this.credentials = undefined;
     this.metering = undefined;
@@ -510,8 +529,41 @@ export class YoobAvatar {
     this.credentials = next;
     this.metering = undefined;
     this.sessionClosed = false;
+    this.dormant = false;
     this.useGrant(next.download_token);
     this.startHeartbeat();
+  }
+
+  /**
+   * The heartbeat says Yoob closed the session for never starting its meter. Forget the session — its token and its
+   * download grant are no good now — but keep everything it loaded: the character stays on screen as it was, with no
+   * phase change and nothing reported, and nothing beats until someone starts talking.
+   */
+  private goDormant(): void {
+    if (this.destroyed) return;
+    this.stopHeartbeat();
+    this.credentials = undefined;
+    this.metering = undefined;
+    this.dormant = true;
+  }
+
+  /**
+   * Reopens a dormant session: the same path a renewal takes (new credentials, the grant handed to the renderer,
+   * heartbeats restarted), shared by every caller that arrives while it runs. A failure ends the avatar's session
+   * exactly as a failed renewal does.
+   */
+  private wake(): Promise<void> {
+    this.waking ??= this.reopenSession()
+      .then(() => {
+        if (!this.credentials) throw new YoobError("renderer", "This avatar was destroyed.");
+      })
+      .catch((error: unknown) => {
+        const failure = this.destroyed ? toYoobError(error) : renewalFailure(error);
+        this.sessionEnded(failure);
+        throw failure;
+      })
+      .finally(() => { this.waking = undefined; });
+    return this.waking;
   }
 
   /** Ends the metered session and removes the character from the page. Downloaded files stay cached. */
@@ -545,6 +597,8 @@ export class YoobAvatar {
     // character makes starts it. Fire and forget: a refusal arrives through the heartbeat as well. Not when the caller
     // said it meters the conversation itself: `meter: false` has to mean that, or it means nothing.
     if (meter) void this.startMetering().catch(() => undefined);
+    // Not metering, but a dormant session still has to be reopened: the character is not to speak on no session.
+    else if (this.dormant && !this.credentials) void this.wake().catch(() => undefined);
     this.utterance += 1;
     this.speaking = true;
     this.ended = false;
@@ -586,6 +640,7 @@ export class YoobAvatar {
     this.metering = undefined;
     this.credentials = checkCredentials(await this.options.getCredentials());
     this.sessionClosed = false;
+    this.dormant = false;
     const access = {
       cdnBase: this.cdnBase,
       downloadToken: this.credentials.download_token,
@@ -771,6 +826,7 @@ export class YoobAvatar {
       renew: () => this.renewSession(),
       onGrant: (grant) => this.useGrant(grant),
       onEnded: (error) => this.sessionEnded(error),
+      onDormant: () => this.goDormant(),
       outageGraceSeconds: this.options.heartbeatOutageGraceSeconds,
       onDegraded: (detail) => {
         if (this.options.onHeartbeatDegraded) this.options.onHeartbeatDegraded(detail);
@@ -817,6 +873,7 @@ export class YoobAvatar {
     this.credentials = next;
     this.metering = undefined;
     this.sessionClosed = false;
+    this.dormant = false;
     this.useGrant(next.download_token);
     // The replacement session opens unmetered like any other. If the one it replaced was being billed the user is
     // still talking, so start its meter rather than hand them free minutes for a renewal they never asked for.
@@ -851,6 +908,7 @@ export class YoobAvatar {
   private sessionEnded(error: YoobError): void {
     if (this.destroyed) return;
     this.stoppedError = error;
+    this.dormant = false;
     this.interrupt();
     this.microphone.stop();
     this.stopHeartbeat();

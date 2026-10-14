@@ -51,6 +51,18 @@
 - A `YoobWebRTCConversation` stopped while `start()` was waiting on the backend can be started again. The cancelled
   start left an internal flag set, and every later `start()` returned without doing anything.
 
+- A session Yoob closes for never metering goes dormant instead of being replaced at once. The console now ends a
+  session that has not started metering within two minutes of opening, with a heartbeat reply of
+  `{ stop: true, reason: "unmetered" }`. The SDK used to treat every non-terminal stop as "open a new session now",
+  which would have made every idle page call `getCredentials()` every two minutes — into a token server's per-key
+  rate limit. Now the character stays on screen with everything it loaded, heartbeats stop, and nothing is reported;
+  the next `startMetering()` (which every conversation's `start()` calls), `prepare()`, or first word of `speak()`
+  opens a new session through `getCredentials()`, once however many callers are waiting, and meters it. A reopen that
+  fails ends the avatar's session exactly as a failed renewal does. Other stop reasons, `abandoned` included, behave
+  as before.
+
+  SDKs older than this release reopen immediately when Yoob closes an unmetered session.
+
 ## 0.12.0
 
 - The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the

@@ -12,6 +12,7 @@ function harness(replies: Script, extra: Partial<SessionMonitorOptions> = {}) {
   const sleeps: number[] = [];
   const waiting: Array<{ ms: number; resolve: () => void }> = [];
   const ended: YoobError[] = [];
+  let dormant = 0;
   const grants: string[] = [];
   const events: string[] = [];
   let renewals = 0;
@@ -24,6 +25,7 @@ function harness(replies: Script, extra: Partial<SessionMonitorOptions> = {}) {
     renew: async () => { renewals += 1; token = `st_${renewals + 1}`; },
     onGrant: (grant) => grants.push(grant),
     onEnded: (error) => ended.push(error),
+    onDormant: () => { dormant += 1; },
     onDegraded: (detail) => events.push(`degraded ${detail}`),
     onRecovered: () => events.push("recovered"),
     retryDelayMs: (n) => n * 1000,
@@ -57,6 +59,7 @@ function harness(replies: Script, extra: Partial<SessionMonitorOptions> = {}) {
     get clock() { return clock; },
     advance: (ms: number) => { clock += ms; },
     get renewals() { return renewals; },
+    get dormant() { return dormant; },
     setRenew: (fn: () => Promise<void>) => { (monitor as unknown as { options: SessionMonitorOptions }).options.renew = fn; },
   };
 }
@@ -241,6 +244,18 @@ test("opens a new session when the API has forgotten this one, and stops if that
   broke.monitor.start();
   await broke.drive(broke.monitor.beatNow());
   assert.equal(broke.ended[0]?.code, "out-of-credit");
+});
+
+test("a session the API closed for never metering goes dormant: no renewal, no more beats", async () => {
+  const h = harness([{ status: 200, body: { stop: true, reason: "unmetered" } }]);
+  h.monitor.start();
+  await h.drive(h.monitor.beatNow());
+  assert.equal(h.dormant, 1);
+  assert.equal(h.renewals, 0, "a new session is not opened until someone starts talking");
+  assert.deepEqual(h.ended, [], "and it is not an error");
+  assert.equal(h.monitor.active, false);
+  await h.tick(); await h.tick();
+  assert.equal(h.requests.length, 1, "nothing beats while dormant");
 });
 
 test("hands over a renewed download grant and tolerates its absence", async () => {

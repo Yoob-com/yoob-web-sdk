@@ -494,6 +494,15 @@ conversation.stop();         // the meter stops and the session ends
 That means `prepare()` can run as soon as the page loads, so the character is ready the moment someone presses Talk,
 without buying the wait.
 
+A session that has not started metering within **two minutes** of opening is closed by Yoob. On a page that prepared
+early and is waiting for someone to press Talk, that is expected and costs you nothing: the character stays on
+screen with everything it downloaded, heartbeats stop, no error is reported and the phase does not change. When the
+user starts talking — `startMetering()`, which every conversation's `start()` calls, `prepare()`, or the first word of
+`speak()` — the SDK opens a new session through `getCredentials()` and meters that one. If the new session can't be
+opened, the avatar stops exactly as it does when a renewal fails: phase `stopped`, `onSessionEnded` and `onError`.
+(SDKs before this release open a replacement session the moment Yoob closes an unmetered one, so an idle page asks
+`getCredentials()` for a new session every two minutes. Upgrade if your token server rate-limits session opens.)
+
 Once a session has ended — `stop()`, or `avatar.endSession()` if you drive the avatar yourself — the character stays
 on screen, but `speak()` throws a `session-ended` `YoobError` instead of rendering with nothing to bill it to.
 `prepare()`, or the next conversation's `start()`, opens a new session without downloading the character again.
@@ -536,7 +545,7 @@ starts the meter**, by calling `avatar.startMetering()` when it decides the conv
 starts it for you then: not the microphone going live, and not the character's first word. `speak()` takes the same
 choice per call, as `avatar.speak(pcm, { meter: false })`.
 
-It is not a way to render unmetered. Yoob ends a session that has not started metering within **two minutes** of
+It is not a way to render unmetered. Yoob closes a session that has not started metering within **two minutes** of
 opening, so call `startMetering()` when the user starts talking, as the conversation classes do.
 
 ## Network
@@ -545,7 +554,7 @@ opening, so call `startMetering()` when the user starts talking, as the conversa
 |---|---|---|
 | `cdn.yoob.com` character files | First visit and version updates | Download grant |
 | `cdn.yoob.com` ONNX Runtime WebAssembly | First visit | Nothing |
-| `la.yoob.com/api/v1/sessions/heartbeat` | Every 15 s from the start of `prepare()` | Session token |
+| `la.yoob.com/api/v1/sessions/heartbeat` | Every 15 s from the start of `prepare()`, until the session ends | Session token |
 | `la.yoob.com/api/v1/sessions/start` | The user starts talking | Session token |
 | `la.yoob.com/api/v1/sessions/end` | `conversation.stop()`, `destroy()` or page close | Session token |
 | `wss://voice.yoob.com/v1/realtime` | Yoob voice conversations | Voice token, microphone audio, typed text |
@@ -579,7 +588,8 @@ transport.
   stops as `session-ended` with reason `unreachable`. `heartbeatOutageGraceSeconds` changes the window (0 to 1800).
   The current download grant keeps being used meanwhile; if it expires during the outage, new downloads fail, but a
   character that already loaded keeps rendering. When Yoob ends an idle session (a laptop that slept), the SDK asks
-  `getCredentials()` for a new one.
+  `getCredentials()` for a new one. When Yoob closes a session that never started metering, the SDK waits until the
+  user starts talking before asking for a new one.
 - **Voice only goes to Yoob.** Yoob voice sessions connect only to `wss://*.yoob.com` unless you set `voiceHosts`.
 - **What your token server must do.** The example server does each of these; keep them when you write your own:
   1. Authenticate the user before minting anything, and fail closed.
