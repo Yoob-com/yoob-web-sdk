@@ -1,12 +1,13 @@
 import {
   ChunkStore, SDK_VERSION, YoobError, clearChunkCache, fetchManifest,
-  type CharacterManifest,
+  type CdnAccess, type CharacterManifest,
   isFeatherTalk,
 } from "./cdn";
 import type { RemoteAudioTrack } from "./engine/audio/conversation-audio";
 import { StatsCollector, type YoobStats } from "./stats";
 import { StatsOverlay } from "./stats-overlay";
 import { AvatarCoordinator } from "./engine/runtime/avatar-coordinator";
+import type { RenderCoordinatorCallbacks } from "./engine/runtime/render-coordinator";
 import { IdleStill, type PackStill } from "./feathertalk/idle";
 import type { RendererSpatialContract } from "./engine/runtime/generated/runtime-tier-contract";
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
@@ -495,7 +496,7 @@ export class YoobAvatar {
       throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped. Call prepare() to start a new one.");
     }
     if (!this.coordinator) {
-      this.coordinator = new AvatarCoordinator(this.canvas, this.video, {
+      this.coordinator = this.createCoordinator({
         onFirstHostFrame: () => { this.canvas.style.opacity = "1"; },
         onPlaybackEnded: () => this.finishUtterance(),
         onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
@@ -525,6 +526,27 @@ export class YoobAvatar {
     // Heartbeats run from here so the session stays alive and its download grant keeps being renewed. They cost
     // nothing until startMetering() — the download is not what the caller is buying.
     this.startHeartbeat();
+    await this.loadCharacter(access);
+    if (!this.monitor?.active) throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
+    this.setPhase("ready");
+  }
+
+  /**
+   * The renderer, which owns the GPU, the workers and the browser's audio graph.
+   *
+   * @internal A seam for tests, which run without WebGPU or Web Audio. Not part of the public API.
+   */
+  protected createCoordinator(callbacks: RenderCoordinatorCallbacks): AvatarCoordinator {
+    return new AvatarCoordinator(this.canvas, this.video, callbacks);
+  }
+
+  /**
+   * Downloads the character from the CDN and warms the renderer. Everything about the session — credentials,
+   * heartbeats, metering — happens around this in `load()`, not inside it.
+   *
+   * @internal A seam for tests, which have no signed manifest to download. Not part of the public API.
+   */
+  protected async loadCharacter(access: CdnAccess & { contentKeys?: Record<string, string> }): Promise<void> {
     const manifest = await fetchManifest(access, this.options.character, this.options.version, "web");
     this.manifestValue = manifest;
     this.root.setAttribute("aria-label", manifest.displayName);
@@ -616,8 +638,6 @@ export class YoobAvatar {
       }).catch(() => undefined);
     }
     this.canvas.style.opacity = "1";
-    if (!this.monitor?.active) throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
-    this.setPhase("ready");
   }
 
   /** A second-layout pack's blinking still (`pack.json` `still`), or undefined when it describes none. */
