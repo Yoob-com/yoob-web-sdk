@@ -54,6 +54,15 @@ export interface YoobStats {
   rendererMs: number;
   /** Mean time to get one host picture: a JPEG decode, or a frame out of the host video. */
   hostMs: number;
+  /**
+   * Mean time per frame in the renderer's own JavaScript, which neither model timer covers.
+   *
+   * `tensorMs` builds the two input tensors, `compositeMs` turns the output back into pixels and draws them. Both ran
+   * outside all three timers above, so the HUD could show a fast encoder and a fast renderer while most of a frame's
+   * cost sat between them, unattributed.
+   */
+  tensorMs: number;
+  compositeMs: number;
   /** Audio appended → the frame for it drawn. How far behind the voice the mouth is running. */
   lipLatencyMs?: number;
   /** The first audio of a reply → the first sound heard. How long the character takes to answer. */
@@ -102,6 +111,8 @@ export class StatsCollector {
   private readonly encoder = new Mean();
   private readonly renderer = new Mean();
   private readonly host = new Mean();
+  private readonly tensor = new Mean();
+  private readonly composite = new Mean();
   private readonly lip = new Mean();
   private underruns = 0;
   private underrunMs = 0;
@@ -146,6 +157,11 @@ export class StatsCollector {
     if (rendererMs > 0) this.renderer.add(rendererMs);
     if (hostMs > 0) this.host.add(hostMs);
   }
+  /** The per-frame JavaScript either side of the renderer: building its inputs, and drawing its output. */
+  noteFrameWork(tensorMs: number, compositeMs: number): void {
+    if (tensorMs > 0) this.tensor.add(tensorMs);
+    if (compositeMs > 0) this.composite.add(compositeMs);
+  }
   noteBackend(backend: string): void { this.backend = backend; }
   describe(character: string, version: string, width: number, height: number): void {
     this.character = character;
@@ -186,6 +202,8 @@ export class StatsCollector {
       encoderMs: this.encoder.take(),
       rendererMs: this.renderer.take(),
       hostMs: this.host.take(),
+      tensorMs: this.tensor.take(),
+      compositeMs: this.composite.take(),
       ...(lip > 0 ? { lipLatencyMs: lip } : {}),
       ...(this.startGate ? { startGate: this.startGate } : {}),
       ...(this.replyLatencyMs !== undefined ? { replyLatencyMs: this.replyLatencyMs } : {}),

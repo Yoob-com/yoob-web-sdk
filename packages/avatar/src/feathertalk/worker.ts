@@ -11,7 +11,7 @@ let frames: HostFrames, referenceCrop: Uint8Array;
 /** Which execution provider the renderer session actually came up on. */
 let backend='';
 /** Milliseconds spent in each stage of the batch being built, reported with it. */
-let encoderMs=0, rendererMs=0, hostMs=0, neuralFrames=0;
+let encoderMs=0, rendererMs=0, hostMs=0, neuralFrames=0, tensorMs=0, compositeMs=0;
 /** What this character's graphs call their tensors. The first layout's names are fixed; the second states its own. */
 let tensors: FeatherTensors = DEFAULT_TENSORS;
 let encoder: ort.InferenceSession, renderer: ort.InferenceSession;
@@ -101,8 +101,9 @@ async function render(requestEpoch:number) {
     const totalFrames=Math.ceil(pcm.length/960);
     const available=final?totalFrames:Math.max(0,Math.floor((samples16.length-80)/640)-lookahead);
     const end=Math.min(nextFrame+8,available);
+    const emitted=Math.max(0,end-nextFrame);
     if(end<=nextFrame){post({type:'batch',epoch,waiting:true});return;}
-    encoderMs=0;rendererMs=0;hostMs=0;neuralFrames=0;
+    encoderMs=0;rendererMs=0;hostMs=0;neuralFrames=0;tensorMs=0;compositeMs=0;
     const hostStart=performance.now();
     // Fetch the upcoming hosts concurrently so network RTT is paid per batch, not per frame.
     await Promise.all(Array.from({length:end-nextFrame},(_,i)=>frames.picture(hostIndex(nextFrame+i,pack.frames.length))));
@@ -136,14 +137,19 @@ async function render(requestEpoch:number) {
         // The 576px renderer is expensive on laptop GPUs. Refresh its mouth at 12.5 fps
         // while keeping host motion and the 25 fps audio clock. The 288px model runs every frame.
         if(pack.innerSize===144 || frame%2===0 || !lastPixels){
-          const image=new ort.Tensor('float32',imageInput(referenceCrop,await frames.crop(index),pack),[1,6,pack.innerSize,pack.innerSize]);
+          const crop=await frames.crop(index);
+          // Timed from here: `frames.crop` is network and decode, already counted in hostMs.
+          const tensorStart=performance.now();
+          const image=new ort.Tensor('float32',imageInput(referenceCrop,crop,pack),[1,6,pack.innerSize,pack.innerSize]);
           const audio=new ort.Tensor('float32',audioInput(hidden,tokens,frame,start),[1,40,1024]);
+          tensorMs+=performance.now()-tensorStart;
           const rendererStart=performance.now();
           const result=await renderer.run({[tensors.rendererImage]:image,[tensors.rendererAudio]:audio});image.dispose();audio.dispose();
           // Per neural frame, not per emitted frame: a big pack refreshes the mouth every other frame, so dividing
           // by the batch size would halve the number and hide what the renderer actually costs.
           rendererMs+=performance.now()-rendererStart;neuralFrames+=1;
           try {
+            const pixelStart=performance.now();
             const output=result[tensors.rendererOutput].data as Float32Array, size=pack.outputSize, plane=size*size;
             const pixels=new Uint8ClampedArray(plane*4);
             for(let i=0;i<plane;i++) {
@@ -152,9 +158,11 @@ async function render(requestEpoch:number) {
               pixels[i*4+3]=255*Math.min(1,(Math.min(x,y,size-1-x,size-1-y)+1)/Math.max(1,pack.featherPixels));
             }
             lastPixels=pixels;
+            compositeMs+=performance.now()-pixelStart;
           } finally {Object.values(result).forEach(t=>t.dispose());}
         }
         if(epoch!==requestEpoch)return;
+        const drawStart=performance.now();
         patchContext.putImageData(new ImageData(lastPixels!,pack.outputSize,pack.outputSize),0,0);
         context.drawImage(hostImage,0,0);
         const f=pack.frames[index], [x1,y1,x2,y2]=f.bbox, inset=(pack.outerSize-pack.outputSize)/2/pack.outerSize;
@@ -162,11 +170,17 @@ async function render(requestEpoch:number) {
         context.drawImage(patch,(x1+(x2-x1)*inset)*sx,(y1+(y2-y1)*inset)*sy,
           (x2-x1)*(1-2*inset)*sx,(y2-y1)*(1-2*inset)*sy);
         const bitmap=canvas.transferToImageBitmap(), audioPcm=pcm.slice(frame*960,Math.min((frame+1)*960,pcm.length));
+        compositeMs+=performance.now()-drawStart;
         post({type:'frame',epoch,frame,bitmap,pcm:audioPcm},[bitmap,audioPcm.buffer]);nextFrame=frame+1;
       }
     } finally {Object.values(encoded).forEach(t=>t.dispose());}
     post({type:'batch',epoch,done:final&&nextFrame>=totalFrames,backend,
-      timing:{encoderMs,rendererMs:neuralFrames?rendererMs/neuralFrames:0,hostMs,neuralFrames}});
+      // Per emitted frame, like every other timer here. It used to be reported per batch, which made it meaningless
+      // to compare across lookaheads: a longer lookahead makes each encoder call cover a longer window *and* more
+      // frames, so the raw batch time rises while the cost per frame falls.
+      timing:{encoderMs:emitted?encoderMs/emitted:0,rendererMs:neuralFrames?rendererMs/neuralFrames:0,hostMs,neuralFrames,
+        // Per emitted frame, not per neural frame: the composite runs for every frame the batch posts.
+        tensorMs:neuralFrames?tensorMs/neuralFrames:0,compositeMs:emitted?compositeMs/emitted:0}});
   } finally {
     busy=false;
     if(requested){requested=false;void render(epoch).catch(fail);}

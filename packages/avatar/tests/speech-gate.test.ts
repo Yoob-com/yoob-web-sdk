@@ -37,3 +37,56 @@ test("the threshold sits above the model's noise floor and below a real voice", 
   assert.equal(gate.accepts(chunk(47), 0), false, "47 is the filler");
   assert.equal(gate.accepts(chunk(48), 0), true, "48 is audible");
 });
+
+/**
+ * What the caller must do when the gate closes.
+ *
+ * The tests above check the gate's arithmetic and stop there, which is how the WebRTC path shipped without ever
+ * ending an utterance: `endSpeech()` is the only thing that finalizes the stream, the playback worklet emits
+ * `drained` only for a finalized stream, and without `drained` the coordinator never rests, never returns to the
+ * idle still and never starts the next utterance. The character rendered one sentence and froze on its last frame.
+ */
+test("the gate closing ends the utterance, exactly once", () => {
+  const gate = new SpeechGate();
+  const calls: string[] = [];
+  const pump = (pcm: Int16Array, now: number) => {
+    const action = gate.update(pcm, now);
+    if (action !== "idle") calls.push(action);
+  };
+
+  pump(chunk(4000), 0);
+  pump(chunk(4000), 20);
+  assert.deepEqual(calls, ["speak", "speak"]);
+
+  // Quiet inside the reply keeps flowing: the mouth would lose its clock otherwise.
+  pump(chunk(0), 200);
+  assert.deepEqual(calls.slice(2), ["speak"]);
+
+  // Past the tail the reply is over, and that has to be said once -- not never, and not on every silent chunk.
+  pump(chunk(0), 500);
+  pump(chunk(0), 520);
+  pump(chunk(0), 2000);
+  assert.deepEqual(calls.slice(3), ["end"], "one end, however long the silence runs");
+});
+
+test("a reply after the gate closed is a new utterance", () => {
+  const gate = new SpeechGate();
+  const calls: string[] = [];
+  const pump = (pcm: Int16Array, now: number) => {
+    const action = gate.update(pcm, now);
+    if (action !== "idle") calls.push(action);
+  };
+
+  pump(chunk(4000), 0);
+  pump(chunk(0), 500);          // settles: "end"
+  pump(chunk(4000), 5000);      // the model speaks again
+  pump(chunk(0), 5600);         // and settles again
+  assert.deepEqual(calls, ["speak", "end", "speak", "end"]);
+});
+
+test("update and accepts agree about which audio is speech", () => {
+  const a = new SpeechGate(), b = new SpeechGate();
+  for (const [level, now] of [[4000, 0], [0, 100], [0, 500], [4000, 900], [0, 2000]] as const) {
+    assert.equal(b.update(chunk(level), now) === "speak", a.accepts(chunk(level), now), `at ${now}ms`);
+  }
+});

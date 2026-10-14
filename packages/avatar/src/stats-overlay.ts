@@ -68,6 +68,9 @@ function lines(s: YoobStats): string[] {
   if (trouble.length) out.push(trouble.join("   "));
 
   out.push(`enc ${ms(s.encoderMs)}   rend ${ms(s.rendererMs)}   host ${ms(s.hostMs)}`);
+  // The JavaScript either side of the renderer. Shown next to the models because the question is always which of the
+  // four is the expensive one, and for a long time two of them could not be seen at all.
+  out.push(`tensor ${ms(s.tensorMs)}   composite ${ms(s.compositeMs)}`);
   out.push(`audio ${n(s.audioBufferedMs)}ms   lead ${s.renderLead > 0 ? "+" : ""}${n(s.renderLead)}f`);
 
   const latency: string[] = [];

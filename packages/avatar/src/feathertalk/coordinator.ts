@@ -127,6 +127,7 @@ export class FeatherCoordinator {
       if(data.waiting)this.stats?.noteWaiting();
       if(this.stats&&data.timing){
         this.stats.noteInference(data.timing.encoderMs,data.timing.rendererMs,data.timing.hostMs);
+        this.stats.noteFrameWork(data.timing.tensorMs??0,data.timing.compositeMs??0);
         this.stats.noteLipFrames(data.timing.neuralFrames??0);
       }
       if(this.stats&&data.backend)this.stats.noteBackend(data.backend);

@@ -107,7 +107,27 @@ const SPEECH_TAIL_MS = 400;
  */
 export class SpeechGate {
   private until = 0;
+  private open = false;
   constructor(private readonly peak = AUDIBLE_PEAK, private readonly tailMs = SPEECH_TAIL_MS) {}
+
+  /**
+   * What to do with this chunk: feed it to the character, end the utterance, or nothing.
+   *
+   * `accepts` says whether the audio is speech; it cannot say when the speech *stopped*, and that edge is the half
+   * that matters. `endSpeech()` is the only thing that finalizes the stream, the playback worklet emits `drained`
+   * only for a finalized one, and without `drained` the coordinator never rests: it holds the last speech frame on
+   * screen, never returns to the idle still, and treats the next reply as a continuation of a stream that already
+   * stopped. "end" is returned once per reply, on the first chunk after the tail expires.
+   */
+  update(pcm: Int16Array, now: number): "speak" | "end" | "idle" {
+    if (this.accepts(pcm, now)) {
+      this.open = true;
+      return "speak";
+    }
+    if (!this.open) return "idle";
+    this.open = false;
+    return "end";
+  }
 
   accepts(pcm: Int16Array, now: number): boolean {
     let loudest = 0;
@@ -275,7 +295,12 @@ export class YoobWebRTCConversation {
     if (this.#closing) return;
     this.#untap?.();
     this.#untap = await this.avatar.attachMediaStream(stream, (pcm) => {
-      if (!this.#closing && this.#gate.accepts(pcm, performance.now())) this.avatar.speak(pcm);
+      if (this.#closing) return;
+      // Both halves, as the LiveKit path already does in `closeUtterance`: feed the voice, and end the utterance
+      // when it stops. Only speaking was wired up here, so the character rendered one sentence and froze.
+      const action = this.#gate.update(pcm, performance.now());
+      if (action === "speak") this.avatar.speak(pcm);
+      else if (action === "end") this.avatar.endSpeech();
     });
   }
 

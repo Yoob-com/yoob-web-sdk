@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.12.0
+
+- The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the
+  LiveKit path has always called `endSpeech()` from `closeUtterance`, and this path called only `speak()`. Nothing
+  else finalizes the stream, the playback worklet emits `drained` only for a finalized stream, and without `drained`
+  the coordinator never rests -- it held the last speech frame on screen, never returned to the idle still, and
+  treated the next reply as a continuation of a stream that had already stopped. The character rendered one sentence
+  and froze. New in 0.9.0, which is when the gate first started closing mid-conversation.
+
+- The renderer reports the JavaScript either side of the models: `tensor` (building the two input tensors) and
+  `composite` (turning the output back into pixels and drawing them). Neither was inside any existing timer, so a
+  frame could look cheap in the HUD while most of its cost sat unattributed between the encoder and the renderer.
+
+- `encoderMs` is now per frame, as `stats.ts` has always documented it and as every other timer already was. It was
+  reported per batch, which made it incomparable across lookaheads: a longer lookahead makes each encoder call cover
+  a longer window *and* more frames, so the batch time rose while the per-frame cost fell, and the HUD showed the
+  first number.
+
+  With all four timers honest, Julien on an M-series Mac costs
+  `rend 17.7 + enc 13.7 + host 7.2 + composite 1.0 + tensor 0.2 = 39.8 ms` per frame against a 40 ms budget.
+
 ## 0.11.0
 
 - Reverts 0.10.0's start gate. The 400 ms PCM cushion and the eight-frame wait are back, and a pack's
