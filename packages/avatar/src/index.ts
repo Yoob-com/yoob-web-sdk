@@ -13,7 +13,7 @@ import type { RendererSpatialContract } from "./engine/runtime/generated/runtime
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
 
 import { YoobMicrophone } from "./microphone";
-import { SessionMonitor, endSession as endSessionOnApi, renewalFailure, startSession } from "./session";
+import { SessionMonitor, UNMETERED, endSession as endSessionOnApi, renewalFailure, startSession } from "./session";
 
 export { YoobError, type CharacterManifest };
 export { YoobMicrophone, type MicrophoneOption, type MicrophoneState, type MicrophoneEvents } from "./microphone";
@@ -380,10 +380,14 @@ export class YoobAvatar {
    * does when a renewal fails (`onSessionEnded`, phase `stopped`) and this rejects with the same error.
    */
   startMetering(): Promise<void> {
+    return this.meter(true);
+  }
+
+  private meter(reopenIfClosed: boolean): Promise<void> {
     if (this.metering) return this.metering;
     if (!this.credentials && this.dormant) {
       // Yoob closed the unmetered session; the user has now started talking, so open a new one and meter that.
-      return this.wake().then(() => this.startMetering());
+      return this.wake().then(() => this.meter(false));
     }
     const credentials = this.credentials;
     if (!credentials) {
@@ -404,7 +408,17 @@ export class YoobAvatar {
       .catch((error: unknown) => {
         // Nothing is being billed, so this may be retried once whatever refused it is resolved.
         if (this.metering === pending) this.metering = undefined;
-        throw toYoobError(error);
+        const failure = toYoobError(error);
+        // Yoob closed this session for never metering, and the heartbeat that would have said so has not run yet:
+        // it is the same dormant session, found a few seconds early. Reopen it and meter that — once, so a backend
+        // that keeps handing out sessions Yoob refuses is reported rather than retried forever.
+        const closed = failure.code === "session-ended"
+          && (failure.details.reason === "gone" || failure.details.reason === UNMETERED);
+        if (closed && reopenIfClosed && !this.destroyed && this.credentials === credentials) {
+          this.goDormant();
+          return this.meter(false);
+        }
+        throw failure;
       });
     this.metering = pending;
     return pending;

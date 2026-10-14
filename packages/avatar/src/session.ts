@@ -342,6 +342,8 @@ function startRefusal(status: number, code: string | undefined, error: string | 
     case "sandbox_limit":
     case "suspended": return new YoobError("session-ended", fallback, { reason: code });
     case "key_revoked": return new YoobError("unauthorized", fallback);
+    // Closed for never metering, before a heartbeat could say so. The avatar reopens and meters a new session.
+    case UNMETERED: return new YoobError("session-ended", fallback, { reason: UNMETERED });
   }
   if (status === 402) return new YoobError("out-of-credit", fallback);
   if (status === 401 || status === 403) return new YoobError("unauthorized", fallback);

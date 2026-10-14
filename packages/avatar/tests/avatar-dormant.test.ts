@@ -117,3 +117,32 @@ test("a conversation started on a dormant avatar opens a new session and meters 
   await convo.stop();
   assert.deepEqual(h.api.calls("end").map((r) => r.token), ["st_2"]);
 });
+
+test("a session Yoob closed for never metering, before a heartbeat said so, is reopened when the meter starts", async (t) => {
+  // The console closes it at two minutes; the next heartbeat may be up to 15 s later. A user who presses Talk in that
+  // window must not get a failed conversation.
+  for (const refusal of [
+    { status: 404, body: { error: "Unknown or already-ended session." } },
+    { status: 409, body: { code: "unmetered", error: "This session closed before it was metered." } },
+  ]) {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const h = realAvatar();
+    await h.avatar.prepare();
+    h.api.startReplies.push(refusal);
+    await h.avatar.startMetering();
+    assert.equal(h.opened, 2, `reopened once after ${refusal.status}`);
+    assert.deepEqual(h.api.calls("start").map((r) => r.token), ["st_1", "st_2"]);
+    assert.deepEqual(h.errors, []);
+    t.mock.timers.reset();
+  }
+});
+
+test("a session that keeps being refused as closed is not reopened in a loop", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = realAvatar();
+  await h.avatar.prepare();
+  const gone = { status: 404, body: { error: "Unknown or already-ended session." } };
+  h.api.startReplies.push(gone, gone, gone);
+  await assert.rejects(h.avatar.startMetering(), (error: YoobError) => error.code === "session-ended");
+  assert.equal(h.opened, 2, "one reopen, then the refusal is reported");
+});

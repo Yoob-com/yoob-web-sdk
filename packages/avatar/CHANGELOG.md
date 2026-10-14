@@ -63,6 +63,11 @@
 
   SDKs older than this release reopen immediately when Yoob closes an unmetered session.
 
+- `startMetering()` reopens a session Yoob has already closed but no heartbeat has reported yet. Yoob closes an
+  unmetered session at two minutes and the next heartbeat can be 15 s later, so a user pressing Talk in that window
+  had their conversation fail on a refused `/sessions/start` (404/410, or `code: "unmetered"`). It now goes dormant
+  and reopens, once; a second refusal is reported as before.
+
 ## 0.12.0
 
 - The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the
