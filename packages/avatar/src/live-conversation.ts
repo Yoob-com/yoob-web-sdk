@@ -28,7 +28,10 @@ export interface YoobLiveConversationOptions {
   getLiveSession: () => Promise<YoobLiveSession>;
   /** Publish the user's microphone, with echo cancellation. Default true. */
   microphone?: boolean;
-  /** Meter this conversation to your workspace (default true). See `YoobLiveKitSessionOptions.meter`. */
+  /**
+   * Meter this conversation to your workspace (default true). False means your app starts the meter itself with
+   * `avatar.startMetering()`. See `YoobLiveKitSessionOptions.meter`.
+   */
   meter?: boolean;
   onState?: (state: ConversationState) => void;
   /** What the user is saying; `final` once the agent has settled on it. */

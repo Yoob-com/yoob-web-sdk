@@ -20,6 +20,16 @@
   microphone is live (and rejects, with the microphone given back, if Yoob refuses it), `stop()` ends the session, and
   a `stop()` during `start()` keeps the socket, microphone and meter from being opened behind it.
 
+- `meter: false` now does what it says. It is meant to hand the meter to the app — the app calls
+  `avatar.startMetering()` itself — but `speak()` started the meter on the character's first word regardless, so the
+  option was a no-op on every conversation class that takes it (`YoobWebRTCConversation`, `YoobLiveConversation`,
+  `YoobLiveKitSession`). `speak()` takes `{ meter: false }` as its second argument (a number is still read as the
+  sample rate), and those classes pass it. The test that claimed this worked used a stand-in avatar whose `speak()`
+  never metered; it now runs the real one.
+
+  Behaviour change: with `meter: false`, a conversation is not billed until your app calls `startMetering()`. Yoob
+  ends sessions that have not started metering within two minutes of opening.
+
 ## 0.12.0
 
 - The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the

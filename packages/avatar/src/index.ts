@@ -159,6 +159,18 @@ export interface YoobSessionStart {
   balanceLow?: boolean;
 }
 
+/** How `speak()` treats one chunk of audio. */
+export interface YoobSpeakOptions {
+  /** The audio's sample rate. Only 24000 (the default) is accepted. */
+  sampleRate?: number;
+  /**
+   * Start the meter at the first utterance if nothing has started it yet. Default true: an app driving the avatar
+   * itself is billed from the character's first word without doing anything. Pass false when the app starts the meter
+   * itself with `startMetering()` — which is what a conversation made with `meter: false` does.
+   */
+  meter?: boolean;
+}
+
 export interface YoobSupport {
   supported: boolean;
   reason?: string;
@@ -339,8 +351,9 @@ export class YoobAvatar {
    * Starts the meter: call it when the user begins talking with the character.
    *
    * `prepare()` opens a session so the character can be downloaded, but a download is not a conversation, and nothing
-   * is billed until this is called. `YoobConversation` calls it for you when the microphone goes live, and `speak()`
-   * calls it on the first utterance, so an app only calls it itself when it drives the avatar some other way.
+   * is billed until this is called. Every conversation calls it for you when the microphone goes live, and `speak()`
+   * calls it on the first utterance (unless told `meter: false`), so an app only calls it itself when it drives the
+   * avatar some other way or made its conversation with `meter: false`.
    *
    * Idempotent: later calls return the same promise and never restart the clock. It rejects if Yoob won't start the
    * session — no credit, a revoked key, a used-up free allowance — and the conversation should not go ahead.
@@ -374,8 +387,12 @@ export class YoobAvatar {
 
   /**
    * Plays 24 kHz mono 16-bit PCM and moves the face with it. Call for each chunk as it streams in, then `endSpeech()`.
+   *
+   * The first chunk of an utterance starts the meter unless something already has, or `{ meter: false }` is passed.
+   * The second argument is the sample rate or a `YoobSpeakOptions`.
    */
-  speak(pcm: Int16Array | ArrayBuffer, sampleRate = SAMPLE_RATE): void {
+  speak(pcm: Int16Array | ArrayBuffer, options: number | YoobSpeakOptions = {}): void {
+    const { sampleRate = SAMPLE_RATE, meter = true } = typeof options === "number" ? { sampleRate: options } : options;
     if (this.phaseValue === "stopped") throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
     if (sampleRate !== SAMPLE_RATE) {
       throw new YoobError("invalid-audio", "@yoob/avatar 0.1 accepts 24 kHz audio. Request 24 kHz PCM from your voice provider.");
@@ -383,7 +400,7 @@ export class YoobAvatar {
     const samples = pcm instanceof Int16Array ? pcm : new Int16Array(pcm);
     if (samples.length === 0) return;
     const coordinator = this.engine();
-    if (!this.speaking || this.ended) this.beginUtterance();
+    if (!this.speaking || this.ended) this.beginUtterance(meter);
     coordinator.appendStreamingAudio(this.responseId, samples, false);
   }
 
@@ -478,10 +495,11 @@ export class YoobAvatar {
     return `yoob-${this.utterance}`;
   }
 
-  private beginUtterance(): void {
-    // An app driving the avatar directly (LiveKit, a custom voice stack) never calls startMetering(), so the first
-    // sound the character makes starts it. Fire and forget: a refusal arrives through the heartbeat as well.
-    void this.startMetering().catch(() => undefined);
+  private beginUtterance(meter: boolean): void {
+    // An app driving the avatar directly (a custom voice stack) may never call startMetering(), so the first sound the
+    // character makes starts it. Fire and forget: a refusal arrives through the heartbeat as well. Not when the caller
+    // said it meters the conversation itself: `meter: false` has to mean that, or it means nothing.
+    if (meter) void this.startMetering().catch(() => undefined);
     this.utterance += 1;
     this.speaking = true;
     this.ended = false;

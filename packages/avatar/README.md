@@ -330,8 +330,8 @@ itself through the speakers otherwise. Pass `microphone: false` to publish it yo
 
 **Billing.** Creating a session bills 15 seconds of voice up front, credited back once the session starts. A session
 that never connects still costs those 15 seconds, so open one when the user asks to talk, not on page load. Avatar
-minutes are metered by Yoob as usual from the moment the connection is live; pass `meter: false` only if you are
-metering elsewhere.
+minutes are metered by Yoob as usual from the moment the connection is live. `meter: false` hands the meter to you:
+see [`meter: false`](#meter-false).
 
 ## LiveKit agents
 
@@ -516,9 +516,19 @@ grant us access to.
 That holds for every path here. A `YoobLiveKitSession` pointed at a room you run on your own LiveKit meters the same
 way as one pointed at ours, because the meter was never in the room.
 
-Driving the avatar yourself, without `YoobConversation`? The first `speak()` starts the meter, or call
+Driving the avatar yourself, without a conversation class? The first `speak()` starts the meter, or call
 `avatar.startMetering()` at whatever moment counts as the start in your app. It is idempotent, and it rejects — before
 the conversation goes ahead — if the workspace has no credit, the key was revoked, or a free allowance is used up.
+
+### `meter: false`
+
+`YoobWebRTCConversation`, `YoobLiveConversation` and `YoobLiveKitSession` take `meter: false`. It means **your app
+starts the meter**, by calling `avatar.startMetering()` when it decides the conversation has begun. Nothing in the SDK
+starts it for you then: not the microphone going live, and not the character's first word. `speak()` takes the same
+choice per call, as `avatar.speak(pcm, { meter: false })`.
+
+It is not a way to render unmetered. Yoob ends a session that has not started metering within **two minutes** of
+opening, so call `startMetering()` when the user starts talking, as the conversation classes do.
 
 ## Network
 

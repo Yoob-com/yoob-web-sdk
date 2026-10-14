@@ -25,7 +25,10 @@ export interface YoobLiveKitSessionOptions {
    * alone — and the SDK's heartbeat is what bills it. Yoob never reads your LiveKit, your agent or your voice
    * provider, so this is the only meter and it does not care whose infrastructure the conversation ran on.
    *
-   * Set it false only when the avatar is a passenger in a call you are billing some other way.
+   * Set it false only when your app starts the meter itself, with `avatar.startMetering()`, at the moment it decides
+   * the conversation has begun. Nothing in the SDK starts it then — not the microphone, and not the character's first
+   * word. Yoob ends a session that has not started metering within two minutes of opening, so a conversation that
+   * never calls it does not keep a character on screen for free.
    */
   meter?: boolean;
   /**
@@ -312,7 +315,8 @@ export class YoobLiveKitSession {
 
   private speak(pcm: Int16Array): void {
     try {
-      this.avatar.speak(pcm);
+      // With `meter: false` the app starts the meter itself, so the first word must not start it either.
+      this.avatar.speak(pcm, { meter: this.options.meter ?? true });
     } catch (error) {
       this.closeUtterance(false);
       this.options.onError?.(error instanceof YoobError ? error : new YoobError("renderer", errorText(error)));

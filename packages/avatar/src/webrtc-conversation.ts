@@ -43,7 +43,11 @@ export interface YoobWebRTCConversationOptions {
   voice?: string;
   /** Publish the user's microphone. Default true. */
   microphone?: boolean;
-  /** Meter this conversation to your workspace (default true). */
+  /**
+   * Meter this conversation to your workspace (default true). False means your app starts the meter itself with
+   * `avatar.startMetering()`: neither the connection nor the character's first word starts it. See
+   * `YoobLiveKitSessionOptions.meter`.
+   */
   meter?: boolean;
   onState?: (state: ConversationState) => void;
   /** What the user is saying, as the model hears it. */
@@ -299,7 +303,7 @@ export class YoobWebRTCConversation {
       // Both halves, as the LiveKit path already does in `closeUtterance`: feed the voice, and end the utterance
       // when it stops. Only speaking was wired up here, so the character rendered one sentence and froze.
       const action = this.#gate.update(pcm, performance.now());
-      if (action === "speak") this.avatar.speak(pcm);
+      if (action === "speak") this.avatar.speak(pcm, { meter: this.options.meter ?? true });
       else if (action === "end") this.avatar.endSpeech();
     });
   }

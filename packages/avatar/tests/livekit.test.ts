@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Room } from "livekit-client";
 import { YoobLiveKitSession, type YoobLiveKitSessionOptions } from "../src/livekit";
 import { YoobError, type YoobAvatar } from "../src/index";
+import { realAvatar, settle, speech } from "./support/real-avatar";
 
 type Fn = (...args: unknown[]) => void;
 
@@ -334,11 +335,25 @@ test("a workspace with no credit never opens the microphone for long", async () 
   assert.deepEqual(room.mic.map((m) => m.enabled), [true, false]);
 });
 
-test("meter: false leaves the meter alone and the room still works", async () => {
-  // For an app embedding the avatar in a call it is already billing by its own means.
-  const { session, calls } = await setup({ meter: false });
+test("meter: false leaves the meter to the app, even once the character speaks", async (t) => {
+  // For an app that starts the meter itself. The fake avatar every other test here uses has a speak() that does not
+  // meter, which is how this test once passed while the real avatar metered on the first word regardless; so this
+  // one runs the real YoobAvatar and counts what reaches the console.
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = realAvatar();
+  const track = new FakeTrack("TR_a");
+  const room = new FakeRoom();
+  room.remoteParticipants.set("a", new FakeParticipant("a", {}, 4, track));
+  const session = new YoobLiveKitSession(h.avatar, { room: room as unknown as Room, meter: false });
   await session.start();
+  await settle();
+  for (let i = 0; i < 5; i += 1) h.avatar.renderer.audio.remote(speech());
+  await settle();
 
-  assert.ok(!calls.includes("meter"));
-  assert.ok(calls.includes("prepare"));
+  assert.ok(h.avatar.renderer.rendered.length > 0, "the character spoke");
+  assert.equal(h.api.calls("start").length, 0, "and nothing started the meter");
+  // The app starts it when it decides the conversation has begun.
+  await h.avatar.startMetering();
+  assert.deepEqual(h.api.calls("start").map((r) => r.token), ["st_1"]);
+  await session.stop();
 });
