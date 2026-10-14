@@ -72,6 +72,9 @@ interface ServerMessage {
  * A spoken conversation between the user and a Yoob character, using the Gemini Live API.
  * Microphone audio goes from the browser to Gemini at 16 kHz; replies (24 kHz) stream into the avatar, which plays
  * them in sync. Speaking over the character interrupts it.
+ *
+ * Like `YoobConversation`, this starts and stops the metered session: `start()` starts the meter once the microphone
+ * is live, and `stop()` ends the session.
  */
 export class YoobGeminiConversation {
   private socket?: WebSocket;
@@ -101,10 +104,20 @@ export class YoobGeminiConversation {
       await this.avatar.prepare();
       await this.avatar.unlockAudio();
       const token = await this.options.getToken();
+      // stop() may run at any await here. A stop before the socket exists must keep it from being opened at all;
+      // one after is handled by stop() itself, which closes the socket and the microphone it finds.
+      if (this.closing) return;
       await this.open(token);
+      if (this.closing) return;
       const microphone = this.avatar.microphone;
       this.unsubscribe.push(microphone.on("audio", (pcm) => this.sendAudio(pcm)));
       await microphone.start(options);
+      if (this.closing) { this.stop(); return; } // stop() ran while the microphone was opening.
+      // The microphone is live and Gemini can hear: from here the user is talking to the character, before any reply,
+      // so this is when the meter starts — as YoobConversation does. Awaited, so a workspace with no credit is
+      // refused before the conversation goes ahead rather than after.
+      await this.avatar.startMetering();
+      if (this.closing) return;
       this.setState("listening");
       const greet = this.options.greet;
       if (greet) {
@@ -117,6 +130,7 @@ export class YoobGeminiConversation {
         this.setState("thinking");
       }
     } catch (error) {
+      if (this.closing) return; // stop() already tore down; nobody is waiting for this start any more.
       const failure = error instanceof YoobError ? error : new YoobError("network", errorText(error));
       this.stop();
       this.options.onError?.(failure);
@@ -132,13 +146,17 @@ export class YoobGeminiConversation {
     this.setState("thinking");
   }
 
-  /** Ends the conversation and releases the microphone. The avatar stays on screen. */
+  /**
+   * Ends the conversation, releases the microphone and ends the metered session, so nothing is billed past the
+   * moment the user stopped talking. The character stays on screen; `start()` opens a fresh session.
+   */
   stop(): void {
     this.closing = true;
     this.stopPlaybackWatch();
     for (const off of this.unsubscribe.splice(0)) off();
     this.avatar.microphone.stop();
     this.avatar.interrupt();
+    void this.avatar.endSession().catch(() => undefined);
     this.setupDone?.reject(new YoobError("network", "The conversation was stopped."));
     this.setupDone = undefined;
     this.socket?.close(1000, "done");

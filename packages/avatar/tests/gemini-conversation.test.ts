@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { GEMINI_LIVE_URL, YoobGeminiConversation } from "../src/gemini-conversation";
 import { YoobError } from "../src/cdn";
 import type { YoobAvatar } from "../src/index";
+import { realAvatar, settle } from "./support/real-avatar";
 
 type Message = Record<string, any>;
 
@@ -44,6 +45,8 @@ function fakeAvatar() {
     phase: "ready",
     prepare: async () => undefined,
     unlockAudio: async () => undefined,
+    startMetering: async () => { calls.push("meter-start"); },
+    endSession: async () => { calls.push("meter-end"); },
     speak: (pcm: Int16Array) => { calls.push(`speak:${pcm.length}`); spoken.push(pcm); avatar.phase = "speaking"; },
     endSpeech: () => calls.push("end"),
     interrupt: () => { calls.push("interrupt"); avatar.phase = "ready"; return 0; },
@@ -249,4 +252,52 @@ test("setup errors reject start; later disconnects and goAway are reported", asy
   assert.match(later.at(-1)!.message, /1011: Internal error/);
   assert.equal(convo.state, "ended");
   assert.ok(live.calls.includes("mic-stop"));
+});
+
+test("Gemini starts the meter when the microphone goes live and ends the session on stop()", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = realAvatar();
+  const convo = new YoobGeminiConversation(h.avatar, { getToken: async () => "auth_tokens/x" });
+  await convo.start();
+  // The user may talk for a while before the first reply: that is billed, so the meter cannot wait for speak().
+  assert.deepEqual(h.api.calls("start").map((r) => r.token), ["st_1"], "metered before anything was said");
+  assert.equal(h.avatar.renderer.rendered.length, 0);
+
+  convo.stop();
+  await settle();
+  assert.deepEqual(h.api.calls("end").map((r) => r.token), ["st_1"], "stop() ends the session");
+  const beats = h.api.calls("heartbeat").length;
+  for (let i = 0; i < 4; i += 1) { t.mock.timers.tick(15_000); await settle(); }
+  assert.equal(h.api.calls("heartbeat").length, beats, "nothing is billed after stop()");
+  assert.equal(h.avatar.renderer.audio.microphoneOpen, false);
+});
+
+test("a Gemini workspace with no credit never reaches listening", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = realAvatar();
+  h.api.startReplies.push({ status: 402, body: { code: "quota_exceeded", error: "This workspace is out of credit." } });
+  const states: string[] = [];
+  const convo = new YoobGeminiConversation(h.avatar, { getToken: async () => "auth_tokens/x", onState: (s) => states.push(s) });
+  await assert.rejects(convo.start(), (error: YoobError) => error.code === "out-of-credit");
+  assert.ok(!states.includes("listening"));
+  assert.equal(h.avatar.renderer.audio.microphoneOpen, false, "the microphone is given back");
+  assert.equal(FakeSocket.last!.readyState, 3, "and Gemini is hung up on");
+});
+
+test("stop() while a Gemini start() is fetching its token leaves no socket, microphone or meter", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const h = realAvatar();
+  let release!: (token: string) => void;
+  const before = FakeSocket.last;
+  const convo = new YoobGeminiConversation(h.avatar, { getToken: () => new Promise((resolve) => { release = resolve; }) });
+  const starting = convo.start();
+  await settle();
+  convo.stop();
+  release("auth_tokens/x");
+  await starting.catch(() => undefined);
+  await settle();
+  assert.equal(FakeSocket.last, before, "no socket was opened");
+  assert.equal(h.avatar.renderer.audio.microphoneOpen, false);
+  assert.equal(h.api.calls("start").length, 0, "nothing was metered");
+  assert.equal(convo.state, "ended");
 });

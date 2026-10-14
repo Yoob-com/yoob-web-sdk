@@ -14,6 +14,12 @@
   `avatar.endSession()` likewise waits for a meter request in flight before ending the session, so the end can never
   reach the server ahead of the start.
 
+- `YoobGeminiConversation` meters like `YoobConversation`. It never started the meter itself — only `speak()`'s
+  fallback did, at the character's first word, so everything the user said before the first reply went unbilled — and
+  `stop()` never ended the session, so heartbeats billed until the page closed. `start()` now starts the meter once the
+  microphone is live (and rejects, with the microphone given back, if Yoob refuses it), `stop()` ends the session, and
+  a `stop()` during `start()` keeps the socket, microphone and meter from being opened behind it.
+
 ## 0.12.0
 
 - The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the
