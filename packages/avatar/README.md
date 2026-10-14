@@ -489,6 +489,10 @@ conversation.stop();         // the meter stops and the session ends
 That means `prepare()` can run as soon as the page loads, so the character is ready the moment someone presses Talk,
 without buying the wait.
 
+Once a session has ended — `stop()`, or `avatar.endSession()` if you drive the avatar yourself — the character stays
+on screen, but `speak()` throws a `session-ended` `YoobError` instead of rendering with nothing to bill it to.
+`prepare()`, or the next conversation's `start()`, opens a new session without downloading the character again.
+
 `onSessionStarted` is the moment billing begins — the place to start a usage clock. It reports `maxSeconds` when the
 API caps the session, as it does for free and sandbox ones.
 

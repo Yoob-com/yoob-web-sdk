@@ -121,6 +121,8 @@ export class FakeCoordinator {
   async initialize() {}
   appendStreamingAudio(response: string, pcm: Int16Array, final = false) {
     this.rendered.push({ response, samples: pcm.length, final });
+    // The utterance plays out and the face rests, as the real renderer reports once playback drains.
+    if (final) queueMicrotask(() => this.callbacks.onPlaybackEnded?.(0));
     return 0;
   }
   cancel() { return 0; }

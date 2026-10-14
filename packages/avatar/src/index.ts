@@ -240,6 +240,12 @@ export class YoobAvatar {
   private destroyed = false;
   private stoppedError?: YoobError;
   private metering?: Promise<void>;
+  /**
+   * The app ended the session (`endSession()`, which every conversation's `stop()` calls) and no new one has opened.
+   * The character stays on screen, but there is nothing to bill its speech to, so `speak()` refuses until `prepare()`
+   * opens a new session.
+   */
+  private sessionClosed = false;
   private stopListeners: Array<(error: YoobError) => void> = [];
   private runtimeEvent?: (event: { loadedBytes?: number }) => void;
   /** The resting picture for a character that ships no idle loop; drawn once, then left alone. */
@@ -394,6 +400,10 @@ export class YoobAvatar {
   speak(pcm: Int16Array | ArrayBuffer, options: number | YoobSpeakOptions = {}): void {
     const { sampleRate = SAMPLE_RATE, meter = true } = typeof options === "number" ? { sampleRate: options } : options;
     if (this.phaseValue === "stopped") throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
+    if (this.sessionClosed) {
+      throw new YoobError("session-ended",
+        "This Yoob session was ended. Call prepare(), or start a conversation, to open a new one before speak().");
+    }
     if (sampleRate !== SAMPLE_RATE) {
       throw new YoobError("invalid-audio", "@yoob/avatar 0.1 accepts 24 kHz audio. Request 24 kHz PCM from your voice provider.");
     }
@@ -448,11 +458,14 @@ export class YoobAvatar {
    * Ends the metered session and stops the clock, leaving the character on screen. Every conversation's `stop()`
    * calls this, so an app only calls it itself when it drives the avatar some other way.
    *
-   * `prepare()` opens a new session afterwards without downloading the character again.
+   * Afterwards `speak()` throws a `session-ended` `YoobError` rather than render with nothing to bill it to.
+   * `prepare()` — or a conversation's `start()`, which calls it — opens a new session without downloading the
+   * character again.
    */
   async endSession(): Promise<void> {
     const credentials = this.credentials;
     const metering = this.metering;
+    this.sessionClosed = true;
     this.stopHeartbeat();
     this.credentials = undefined;
     this.metering = undefined;
@@ -469,6 +482,7 @@ export class YoobAvatar {
     if (this.destroyed) return;
     this.credentials = next;
     this.metering = undefined;
+    this.sessionClosed = false;
     this.useGrant(next.download_token);
     this.startHeartbeat();
   }
@@ -540,6 +554,7 @@ export class YoobAvatar {
     this.endCurrentSession();
     this.metering = undefined;
     this.credentials = checkCredentials(await this.options.getCredentials());
+    this.sessionClosed = false;
     const access = {
       cdnBase: this.cdnBase,
       downloadToken: this.credentials.download_token,
@@ -770,6 +785,7 @@ export class YoobAvatar {
     if (this.destroyed) return;
     this.credentials = next;
     this.metering = undefined;
+    this.sessionClosed = false;
     this.useGrant(next.download_token);
     // The replacement session opens unmetered like any other. If the one it replaced was being billed the user is
     // still talking, so start its meter rather than hand them free minutes for a renewal they never asked for.

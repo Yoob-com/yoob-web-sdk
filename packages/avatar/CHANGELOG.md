@@ -30,6 +30,13 @@
   Behaviour change: with `meter: false`, a conversation is not billed until your app calls `startMetering()`. Yoob
   ends sessions that have not started metering within two minutes of opening.
 
+- `speak()` after `endSession()` throws a `session-ended` `YoobError` until a new session opens. The phase stayed
+  `ready` and `speak()` went on rendering with no session and no heartbeat — a character speaking unmetered.
+  `prepare()`, or a conversation's `start()`, opens a new session and `speak()` works again.
+
+  Behaviour change: code that kept calling `speak()` after a conversation's `stop()` (or after `endSession()`) now
+  gets an exception; `YoobLiveKitSession` reports it through `onError`.
+
 ## 0.12.0
 
 - The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the
