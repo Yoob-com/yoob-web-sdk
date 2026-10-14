@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `YoobLiveConversation.stop()` ends the metered session. It left the room and stopped there, so heartbeats kept
+  billing until the page closed, and the next `start()` carried on in the same metered session — the time between two
+  conversations was billed as talk. `YoobLiveKitSession.stop()` now ends the meter it started too (unless it was made
+  with `meter: false`), and so does its room disconnecting; it still never disconnects a room it was handed.
+
+- `YoobLiveConversation.stop()` during `start()` leaves nothing behind. A stop while the backend, the room connection
+  or the meter request was still answering used to be ignored by the `start()` in progress, which went on to connect
+  the room, publish the microphone and start the meter with nothing left to stop them. `start()` now resolves without
+  connecting anything, and `stop()` resolves once the meter request in flight has answered and been ended.
+  `avatar.endSession()` likewise waits for a meter request in flight before ending the session, so the end can never
+  reach the server ahead of the start.
+
 ## 0.12.0
 
 - The WebRTC transport ends an utterance when the voice stops. `SpeechGate` opened one and never closed it: the

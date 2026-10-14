@@ -112,6 +112,7 @@ export class YoobLiveKitSession {
       const unlocked = this.avatar.unlockAudio();
       await this.avatar.prepare();
       await unlocked;
+      if (!this.running) return;
       this.listen();
       this.registerTranscripts();
       for (const participant of room.remoteParticipants.values()) this.consider(participant);
@@ -153,7 +154,11 @@ export class YoobLiveKitSession {
     }
   }
 
-  /** Stops rendering, unpublishes the microphone this session published and removes its listeners. */
+  /**
+   * Stops rendering, unpublishes the microphone this session published and removes its listeners. When this session
+   * started the meter (`meter` not false) it also ends the avatar's metered session, so nothing is billed after the
+   * conversation is over; the room itself is left connected. A room that disconnects stops the session the same way.
+   */
   async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
@@ -169,6 +174,8 @@ export class YoobLiveKitSession {
     this.publishedMicrophone = false;
     this.setState("ended");
     if (microphone) await this.options.room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
+    // Also while start() is still awaiting the meter: endSession() waits for that request, then ends what it started.
+    if (this.options.meter ?? true) await this.avatar.endSession().catch(() => undefined);
   }
 
   private listen(): void {

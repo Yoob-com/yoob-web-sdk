@@ -428,17 +428,22 @@ export class YoobAvatar {
   }
 
   /**
-   * Ends the metered session and stops the clock, leaving the character on screen. `YoobConversation.stop()` calls
-   * this, so an app only calls it itself when it drives the avatar some other way.
+   * Ends the metered session and stops the clock, leaving the character on screen. Every conversation's `stop()`
+   * calls this, so an app only calls it itself when it drives the avatar some other way.
    *
    * `prepare()` opens a new session afterwards without downloading the character again.
    */
   async endSession(): Promise<void> {
     const credentials = this.credentials;
+    const metering = this.metering;
     this.stopHeartbeat();
     this.credentials = undefined;
     this.metering = undefined;
-    if (credentials) await endSessionOnApi(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
+    if (!credentials) return;
+    // A start still in flight would land after the end and leave the meter running on the server, so the end waits
+    // for it. A start that fails needs no end, but ending a session twice is harmless and this one is ended anyway.
+    await metering?.catch(() => undefined);
+    await endSessionOnApi(this.apiBaseOf(credentials), credentials.session_token).catch(() => undefined);
   }
 
   /** A new session for a character that is already downloaded and rendering. */

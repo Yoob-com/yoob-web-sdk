@@ -49,6 +49,7 @@ export class YoobLiveConversation {
   #room?: Room;
   #session?: YoobLiveKitSession;
   #state: ConversationState = "idle";
+  #attempt = 0;
 
   constructor(private readonly avatar: YoobAvatar, private readonly options: YoobLiveConversationOptions) {}
 
@@ -64,15 +65,25 @@ export class YoobLiveConversation {
   /** Opens the room and starts listening. Call from a click: it asks for the microphone and unlocks sound. */
   async start(): Promise<void> {
     if (this.#room) return;
+    // Every await below is a point where stop() may have run. Each attempt has a number, stop() moves it on, and an
+    // attempt that is no longer current undoes what it just did and leaves: a cancelled start must not leave a room
+    // connected, a microphone published or a meter running with nothing left to stop them.
+    const attempt = ++this.#attempt;
+    const cancelled = () => attempt !== this.#attempt;
     this.#setState("connecting");
 
     const room = new Room();
     this.#room = room;
     try {
       const session = check(await this.options.getLiveSession());
+      if (cancelled()) return;
       // Connected here rather than inside YoobLiveKitSession, which deliberately never owns the room it is handed —
       // an app embedding the avatar in its own LiveKit call keeps control of its connection.
       await room.connect(session.url, session.token);
+      if (cancelled()) {
+        await room.disconnect().catch(() => undefined);
+        return;
+      }
 
       this.#session = new YoobLiveKitSession(this.avatar, {
         room,
@@ -83,8 +94,10 @@ export class YoobLiveConversation {
         onAssistantTranscript: this.options.onAssistantTranscript,
         onError: this.options.onError,
       });
+      // Once the session exists, stop() reaches it: it unpublishes the microphone and ends a meter that is starting.
       await this.#session.start();
     } catch (error) {
+      if (cancelled()) return; // stop() already tore everything down; the failure is of a start nobody wants.
       const failure = error instanceof YoobError ? error : new YoobError("network", message(error));
       await this.stop();
       this.options.onError?.(failure);
@@ -92,15 +105,21 @@ export class YoobLiveConversation {
     }
   }
 
-  /** Ends the conversation and leaves the room. The character stays on screen. */
+  /**
+   * Ends the conversation, leaves the room and ends the metered session, so nothing is billed past this point. The
+   * character stays on screen; `start()` opens a fresh session. Safe to call while `start()` is still running.
+   */
   async stop(): Promise<void> {
+    this.#attempt += 1;
     const room = this.#room;
+    const session = this.#session;
     this.#room = undefined;
-    await this.#session?.stop().catch(() => undefined);
     this.#session = undefined;
+    await session?.stop().catch(() => undefined);
     // We opened this room, so we close it — and the agent takes the empty room as its cue to end the model session.
     await room?.disconnect().catch(() => undefined);
     this.#setState("ended");
+    await this.avatar.endSession().catch(() => undefined);
   }
 
   #setState(state: ConversationState): void {

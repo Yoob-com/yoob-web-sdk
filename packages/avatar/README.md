@@ -369,7 +369,8 @@ endButton.onclick = async () => {
 };
 ```
 
-The session follows the first agent in the room (or `agentIdentity`). It splits the agent's speech into replies with
+`session.stop()` ends the metered session it started (and so does the room disconnecting), but leaves the room
+connected: it is yours. The session follows the first agent in the room (or `agentIdentity`). It splits the agent's speech into replies with
 the agent's `lk.agent.state` attribute, or with 600 ms of silence (`silenceMs`) when the agent does not publish one. If
 the agent stops speaking while the user is talking, the character stops at once. The microphone is published through
 LiveKit with echo cancellation; pass `microphone: { deviceId }` to pick an input, or `microphone: false` to publish it
@@ -473,8 +474,10 @@ A session is billed for the time the user spends talking to the character, and f
 
 Opening a session and calling `prepare()` costs nothing, however long they take: a session exists so the character can
 be downloaded, and on a cold cache that download is tens of seconds that nobody asked to pay for. The meter starts when
-`YoobConversation.start()` brings the microphone up, and stops when `stop()`, `destroy()` or closing the page ends the
-session. Heartbeats run the whole time, but the ones before the meter starts only keep the session alive and renew its
+a conversation's `start()` brings the microphone up, and stops when that conversation's `stop()`, `avatar.destroy()`
+or closing the page ends the session. That holds for every conversation class — `YoobConversation`,
+`YoobGeminiConversation`, `YoobWebRTCConversation`, `YoobLiveConversation` and `YoobLiveKitSession` — and a `stop()`
+that lands while `start()` is still connecting leaves nothing running and nothing metered. Heartbeats run the whole time, but the ones before the meter starts only keep the session alive and renew its
 download grant.
 
 ```js
