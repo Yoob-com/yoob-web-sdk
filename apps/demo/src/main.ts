@@ -117,6 +117,8 @@ if (!support.supported) {
   speak.addEventListener("click", async () => {
     if (avatar.phase === "speaking") { avatar.interrupt(); return; }
     await avatar.unlockAudio();
+    // Stopping the conversation ends the session, and speak() refuses without one: open a new one if it was ended.
+    await avatar.prepare();
     const pcm = new Int16Array(await (await fetch("/hello-24k.pcm")).arrayBuffer());
     for (let offset = 0; offset < pcm.length; offset += 2400) {
       avatar.speak(pcm.subarray(offset, offset + 2400));
