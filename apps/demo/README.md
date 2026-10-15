@@ -19,9 +19,9 @@ account instead, start the token server with `OPENAI_API_KEY` and switch `getVoi
 `?character=<id>` shows another character (for example `?character=astrid`; see the SDK README's character list), and
 the Character menu switches between them.
 
-### FeatherTalk packs without the CDN (development)
+### realistic packs without the CDN (development)
 
-Build a pack with `scripts/feathertalk-pack.mjs` (see `packages/avatar/FORMAT.md`), then run the demo on the SDK's
+Build a pack with `scripts/realistic-pack.mjs` (see `packages/avatar/FORMAT.md`), then run the demo on the SDK's
 sources with the packs directory:
 
 ```sh
@@ -30,5 +30,5 @@ YOOB_SDK_SOURCE=1 YOOB_PACKS_DIR=/path/to/packs npm run demo
 
 `?pack=/packs/<id>/` loads `<packs>/<id>` with no session. `parity.html` measures a pack: `mode=offline` composes every
 frame of a WAV (`YOOB_REF_DIR`, `?wav=/ref/<file>`) as the Luna app's `AvatarModelProbe --stream` does and saves each
-frame's 448 px face window to `YOOB_PARITY_OUT` (compare with `scripts/feathertalk-parity/`); `mode=live` speaks it at
+frame's 448 px face window to `YOOB_PARITY_OUT` (compare with `scripts/realistic-parity/`); `mode=live` speaks it at
 1x through `YoobAvatar` (muted) and reports rendered, shown, skipped and late frames and when each frame was shown.

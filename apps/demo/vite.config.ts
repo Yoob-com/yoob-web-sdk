@@ -3,8 +3,8 @@ import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
 /**
- * Development only. FeatherTalk character packs from a local directory (`YOOB_PACKS_DIR`, served at /packs/<id>/, built
- * with scripts/feathertalk-pack.mjs), test audio from `YOOB_REF_DIR` (/ref/), and the parity page's results written to
+ * Development only. Realistic character packs from a local directory (`YOOB_PACKS_DIR`, served at /packs/<id>/, built
+ * with scripts/realistic-pack.mjs), test audio from `YOOB_REF_DIR` (/ref/), and the parity page's results written to
  * `YOOB_PARITY_OUT` (POST /__parity/<run>/<file>, `?append=1` to append). Nothing here is part of the SDK.
  */
 function localPacks(): Plugin {

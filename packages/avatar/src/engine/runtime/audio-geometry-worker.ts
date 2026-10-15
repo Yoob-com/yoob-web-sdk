@@ -2,7 +2,7 @@
 
 import { fallbackPhoneTimeline, frameRms } from "../audio/phoneme-activity";
 import { pcm16ToFloat32, resample24kTo16k } from "../audio/resample-24k-16k";
-import { FeatherHuBERT } from "../inference/feather-hubert";
+import { AudioFeatures } from "../inference/audio-features";
 import { GeometryRuntime } from "../inference/geometry";
 import { setOrtWasmUrl } from "../inference/ort-runtime";
 import type {
@@ -10,7 +10,7 @@ import type {
 } from "./audio-geometry-protocol";
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
-let feather: FeatherHuBERT | undefined;
+let feather: AudioFeatures | undefined;
 let geometry: GeometryRuntime | undefined;
 let currentEpoch = 0;
 let queue: Promise<void> = Promise.resolve();
@@ -24,11 +24,11 @@ function ensureCurrent(epoch: number): void {
 }
 
 async function initialize(
-  featherModel: ArrayBuffer,
+  encoderModel: ArrayBuffer,
   geometryModel: ArrayBuffer,
 ): Promise<void> {
-  post({ type: "status", message: "Opening FeatherHuBERT in audio worker…", stage: "opening" });
-  feather = await FeatherHuBERT.load(new Uint8Array(featherModel));
+  post({ type: "status", message: "Opening AudioFeatures in audio worker…", stage: "opening" });
+  feather = await AudioFeatures.load(new Uint8Array(encoderModel));
   post({ type: "status", message: "Opening geometry in audio worker…", stage: "opening" });
   geometry = await GeometryRuntime.load(new Uint8Array(geometryModel));
   post({ type: "status", message: "Warming audio + geometry worker…", stage: "warming" });
@@ -60,8 +60,8 @@ async function prepare(
   post({
     type: "status",
     message: message.bootstrap
-      ? `Bootstrap FeatherHuBERT · ${modelFrameCount} frames + silence tail…`
-      : `Extracting FeatherHuBERT for ${modelFrameCount} streaming frames…`,
+      ? `Bootstrap AudioFeatures · ${modelFrameCount} frames + silence tail…`
+      : `Extracting AudioFeatures for ${modelFrameCount} streaming frames…`,
   });
   const featherStarted = performance.now();
   const audioRows = await feather.extract(pcm16k, modelFrameCount, 2);
@@ -107,7 +107,7 @@ scope.onmessage = (event: MessageEvent<AudioGeometryMainToWorker>) => {
   }
   if (message.type === "prepare") currentEpoch = message.epoch;
   const task = queue.then(() => message.type === "initialize"
-    ? (message.ortWasmUrl && setOrtWasmUrl(message.ortWasmUrl), initialize(message.featherModel, message.geometryModel))
+    ? (message.ortWasmUrl && setOrtWasmUrl(message.ortWasmUrl), initialize(message.encoderModel, message.geometryModel))
     : prepare(message));
   queue = task.catch(() => undefined);
   task.catch((error: unknown) => {

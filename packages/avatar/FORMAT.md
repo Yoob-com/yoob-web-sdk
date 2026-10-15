@@ -1,11 +1,10 @@
-# FeatherTalk web character pack (`feathertalk-web`, schema 1)
+# Realistic web character pack (`realistic-web`, schema 1)
 
 The realistic characters of the Luna app (Astrid, Valentina, Leonie, Linda, Santiago, Julien, Lars, Lina, Zoe, Maya, Ren,
-Kofi, Bruno) run in the browser on the `feathertalk-web` engine of `@yoob/avatar`. It is a port of the iOS runtime
-(`language-companions/ios/LanguageCompanions/AvatarRuntime`): the character's own footage plays under the face along its
+Kofi, Bruno) run in the browser on the `realistic-web` engine of `@yoob/avatar`. It is a port of the Luna app's iOS runtime: the character's own footage plays under the face along its
 head path, and only the lips are drawn by the character's lip model from the voice, 25 lip frames a second.
 
-A pack is one directory per character. `scripts/feathertalk-pack.mjs` builds it from an iOS face folder plus the
+A pack is one directory per character. `scripts/realistic-pack.mjs` builds it from an iOS face folder plus the
 character's ONNX renderer; the Yoob CDN packer (`yoob-cdn/packer/pack.mjs`) then chunks and signs it like any other web
 pack. Nothing in a pack is committed to git.
 
@@ -17,8 +16,8 @@ pack. Nothing in a pack is committed to git.
 | `still/base.jpg` | The still idle face (host `still.host` with its lips closed), 1080 x 1920. Also the poster. | 0/1 |
 | `still/blink-<n>.jpg` | The blink pictures, `still.rect` sized, drawn over the eyes (speech blinks). | 1 |
 | `closed_audio.f32` | The closed-mouth audio window: 40 x 1024 float32, little endian (163,840 bytes). | 2 |
-| `encoder.onnx` | The FeatherTalk audio encoder (FeatherHuBERT, the iOS `encoder21` / `encoder_runtime`). The same bytes in every pack, so the CDN stores its chunks once. | 2 |
-| `renderer.onnx` | The character's lip renderer (UNet + SR-lite x2). | 2 |
+| `encoder.onnx` | The audio encoder (the iOS `encoder21` / `encoder_runtime`). The same bytes in every pack, so the CDN stores its chunks once. | 2 |
+| `renderer.onnx` | The character's lip renderer. | 2 |
 | `hosts.mp4` | The iOS pack's HEVC host footage, byte for byte (`manifest.json` receipt). Decoded with WebCodecs where the browser has HEVC. | 2 |
 | `hosts.h264.mp4` | The same footage as H.264 for browsers without HEVC: High profile, no B-frames, a keyframe every 15 frames (as the HEVC), CRF 14 (about 51 dB PSNR against the HEVC), the HEVC's colour tags. Only downloaded when `hosts.mp4` can't be decoded. | 2 |
 
@@ -29,11 +28,11 @@ every frame's byte range, so a frame is a slice of the file handed to `VideoDeco
 
 ```jsonc
 {
-  "format": "feathertalk-web",
+  "format": "realistic-web",            // packs built before 2026-10-12 say "feathertalk-web"; SDK 0.5.0 loads both
   "schema": 1,
   "id": "astrid",                       // the CDN character id
   "name": "Astrid",
-  "identity": "astrid-exp-B350-e174",   // the iOS pack identity (AvatarManifest.identity)
+  "identity": "c-091a0664",             // the iOS pack identity (AvatarManifest.identity), opaque
   "audio": {
     "sampleRate": 16000, "fps": 25, "samplesPerFrame": 640, "encoderTailSamples": 80,
     "waveformMean": 0.000182, "waveformStd": 0.0603,   // the encoder input is (sample - mean) / std
@@ -84,7 +83,7 @@ every frame's byte range, so a frame is a slice of the file handed to `VideoDeco
 Rules the runtime checks at load (a pack that fails one is refused, as iOS refuses a pack):
 
 - `audio`: 16 kHz, 25 fps, 640 samples a frame, 80 tail samples, `waveformStd` > 1e-6, the window list above.
-- `windows`: the H08 contract (9 / 16 / 4 / 8) or a low-lookahead one (bootstrap 0, left >= 16, left + 1 + right = 21).
+- `windows`: the standard contract (9 / 16 / 4 / 8) or a low-lookahead one (bootstrap 0, left >= 16, left + 1 + right = 21).
 - `geometry`: output a whole multiple of inner, outer a multiple of the scale, the face side (outer / scale) at least inner
   with an even border, the hole inside the inner crop, feather 8.
 - `hosts.boxes`: one square box per host inside the frame; `calmWindow` must fit the host count (`CalmHostWindow.fits`).
@@ -113,12 +112,12 @@ The renderer's crops are cut from the decoded frames on the GPU at load (inner) 
 
 ```json
 {
-  "character": "astrid", "platform": "web", "version": "2026.10.07.1", "engine": "feathertalk-web",
-  "displayName": "Astrid", "minSDK": "0.4.0",
+  "character": "astrid", "platform": "web", "version": "2026.10.12.2", "engine": "realistic-web",
+  "displayName": "Astrid", "minSDK": "0.5.0",
   "source": "<web pack directory>",
   "idle": { "source": "<web pack directory>/still", "fps": 25 },
   "tiers": { "pack.json": 1, "still/base.jpg": 1 },
-  "runtime": { "assetVersion": "<id>-<identity>-web1", "pack": "pack.json" }
+  "runtime": { "pack": "pack.json" }
 }
 ```
 
@@ -128,14 +127,14 @@ each variant has its own signed manifest `<version>.web.v<k>.json`, and the CDN 
 the usual `latest.web.json` name. The SDK needs no change.
 
 The packer's `poster.jpg` is then `still/base.jpg` (the first JPEG of the still folder). SDKs before 0.4.0 refuse the
-engine by `minSDK`; 0.4.0 refuses `latest.web.json` manifests whose engine it doesn't know.
+engine by `minSDK`; 0.4.0 refuses `latest.web.json` manifests whose engine it doesn't know. The engine was published as
+`feathertalk-web` until 2026-10-12 (0.4.0); 0.5.0 loads both ids, and characters published since need 0.5.0.
 
 ## Building a pack
 
 ```sh
-node scripts/feathertalk-pack.mjs \
-  --face ~/.local/share/language-companions/assets/avatars-astrid-exp/B \
-  --onnx <web-onnx>/B --encoder <web-onnx>/_shared/encoder.onnx \
+node scripts/realistic-pack.mjs \
+  --face <iOS face folder> --onnx <ONNX folder> --encoder <encoder.onnx> [--lip-picture <lip picture JSON>] \
   --id astrid --out packs/astrid
 ```
 

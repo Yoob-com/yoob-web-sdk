@@ -1,4 +1,4 @@
-// StreamingAvatar (language-companions AvatarRuntime/StreamingAvatar.swift): 16 kHz audio in, lip crops out, one per
+// StreamingAvatar (the Luna app's AvatarRuntime/StreamingAvatar.swift): 16 kHz audio in, lip crops out, one per
 // 40 ms frame, each with the host frame of the head path, the silence mix and the blink it is composed with. The
 // encoder and renderer are injected (`LipModels`), so the scheduling here is the app's own, testable without a GPU.
 import { HostPath } from "./host-path";

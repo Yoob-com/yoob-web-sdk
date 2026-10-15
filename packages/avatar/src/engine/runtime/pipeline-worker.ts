@@ -192,7 +192,7 @@ async function initialize(): Promise<void> {
   );
   post({ type: "status", message: "Downloading and verifying avatar runtime…",
     stage: "download", progress: 0 });
-  const featherBytes = store.bytes("models/featherhubert1024_fp16.onnx");
+  const encoderBytes = store.bytes("models/featherhubert1024_fp16.onnx");
   const geometryBytes = store.bytes("models/serve320_geometry_dynamic_fp16.onnx");
   const rendererBytes = store.bytes("models/serve320_renderer_c32_fp16.onnx");
   // Overlap avatar table download with model session open. Bundle tables are
@@ -201,12 +201,12 @@ async function initialize(): Promise<void> {
   const bundleLoading = Serve320Bundle.load(store);
   post({ type: "status", message: "Opening isolated audio + geometry worker…",
     stage: "opening" });
-  const [featherModel, geometryModel] = await Promise.all([featherBytes, geometryBytes]);
+  const [encoderModel, geometryModel] = await Promise.all([encoderBytes, geometryBytes]);
   audioGeometry = await supervised(
     "Opening audio + geometry worker",
     "opening",
     () => AudioGeometryClient.create(
-      featherModel,
+      encoderModel,
       geometryModel,
       (message, stage) => post({ type: "status", message, stage }),
       runtimeConfig?.ortWasmUrl,

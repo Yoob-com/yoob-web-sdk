@@ -19,7 +19,7 @@ export interface PreparedAudioGeometry {
 }
 
 export type AudioGeometryMainToWorker =
-  | { type: "initialize"; featherModel: ArrayBuffer; geometryModel: ArrayBuffer; ortWasmUrl?: string }
+  | { type: "initialize"; encoderModel: ArrayBuffer; geometryModel: ArrayBuffer; ortWasmUrl?: string }
   | ({ type: "prepare"; requestID: number } & AudioGeometryPrepareRequest)
   | { type: "cancel"; epoch: number };
 

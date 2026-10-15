@@ -22,8 +22,8 @@ async function post<T>(path: string, body: object): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-// ?character=<id> picks the character (luna-anime by default; the realistic FeatherTalk characters by name, for example
-// astrid). In development, ?pack=/packs/<id>/ loads a local FeatherTalk pack instead of the CDN (see vite.config.ts).
+// ?character=<id> picks the character (luna-anime by default; the realistic characters by name, for example
+// astrid). In development, ?pack=/packs/<id>/ loads a local realistic pack instead of the CDN (see vite.config.ts).
 const params = new URLSearchParams(location.search);
 const packUrl = params.get("pack") ?? undefined;
 const characterId = params.get("character") ?? packUrl?.split("/").filter(Boolean).pop() ?? "luna-anime";

@@ -1,12 +1,12 @@
-// Development page: the FeatherTalk engine against the Luna app's reference renders, and its speed in this browser.
+// Development page: the realistic engine against the Luna app's reference renders, and its speed in this browser.
 // offline: every frame composed in order from the WAV in 20 ms packets, as `AvatarModelProbe --stream` does, each
 //          frame's 448 px face window saved through the dev server (POST /__parity/<run>/faces.bgr) with its metadata.
 // live:    the WAV spoken at 1x in 20 ms packets through YoobAvatar (instant lips, audible clock), then the engine's
 //          counters: frames rendered, shown, skipped and late, model and compose times, and when each frame was shown.
 import { YoobAvatar } from "@yoob/avatar";
 import { ConversationAudio } from "../../../packages/avatar/src/engine/audio/conversation-audio";
-import { FeatherTalkCoordinator } from "../../../packages/avatar/src/engine/feathertalk/coordinator";
-import type { FTStats } from "../../../packages/avatar/src/engine/feathertalk/protocol";
+import { RealisticCoordinator } from "../../../packages/avatar/src/engine/realistic/coordinator";
+import type { FTStats } from "../../../packages/avatar/src/engine/realistic/protocol";
 
 const params = new URLSearchParams(location.search);
 let pack = params.get("pack") ?? "/packs/astrid/";
@@ -63,7 +63,7 @@ async function offline(): Promise<void> {
   await save("faces.bgr", new Uint8Array(0));
   let written: Promise<void> = Promise.resolve();
   const writes: Promise<unknown>[] = [];
-  const coordinator = new FeatherTalkCoordinator(undefined, new ConversationAudio(), {
+  const coordinator = new RealisticCoordinator(undefined, new ConversationAudio(), {
     onError: (message) => say(`error: ${message}`),
     onCapture: (capture) => {
       const bgr = new Uint8Array(capture.side * capture.side * 3);
@@ -122,7 +122,7 @@ async function live(): Promise<void> {
     const check = () => (avatar.phase === "ready" ? resolve() : setTimeout(check, 50));
     setTimeout(check, 500);
   });
-  const coordinator = (avatar as unknown as { coordinator: FeatherTalkCoordinator }).coordinator;
+  const coordinator = (avatar as unknown as { coordinator: RealisticCoordinator }).coordinator;
   const t0 = performance.now();
   const repeats = Number(params.get("repeat") ?? "1");
   const delays: number[] = [];

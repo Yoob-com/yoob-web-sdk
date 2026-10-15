@@ -1,11 +1,11 @@
-// The page side of the FeatherTalk engine: plays the voice and tells the worker where the audio is. A direct-WebRTC
+// The page side of the realistic engine: plays the voice and tells the worker where the audio is. A direct-WebRTC
 // style "instant lips" playout, as the Luna app does for these faces (LipTiming.InstantLips): the voice is heard
 // `voiceDelayMs` after its first packet arrives and never waits for the face; each lip frame is shown at its audio's
 // time on the audible clock (minus the face's lip lead), cross-faded at the display's rate.
 import type { ConversationAudio, PlaybackTick } from "../audio/conversation-audio";
-import type { FTMainToWorker, FTStats, FTWorkerToMain, FeatherTalkOptions, PackSource } from "./protocol";
+import type { FTMainToWorker, FTStats, FTWorkerToMain, RealisticOptions, PackSource } from "./protocol";
 
-export interface FeatherTalkCallbacks {
+export interface RealisticCallbacks {
   onReady?: (info: Extract<FTWorkerToMain, { type: "ready" }>) => void;
   onProgress?: (loadedBytes: number, totalBytes: number) => void;
   onPlaybackStarted?: (utterance: number) => void;
@@ -15,8 +15,8 @@ export interface FeatherTalkCallbacks {
   onCapture?: (capture: Extract<FTWorkerToMain, { type: "capture" }>) => void;
 }
 
-export class FeatherTalkCoordinator {
-  private readonly worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "feathertalk" });
+export class RealisticCoordinator {
+  private readonly worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "realistic" });
   private utterance = 0;
   private responseId?: string;
   private final = false;
@@ -33,13 +33,13 @@ export class FeatherTalkCoordinator {
   constructor(
     private readonly canvas: HTMLCanvasElement | undefined,
     readonly audio: ConversationAudio,
-    private readonly callbacks: FeatherTalkCallbacks = {},
+    private readonly callbacks: RealisticCallbacks = {},
   ) {
-    this.worker.onerror = (event) => this.callbacks.onError?.(`feathertalk worker: ${event.message}`);
+    this.worker.onerror = (event) => this.callbacks.onError?.(`realistic worker: ${event.message}`);
     this.worker.onmessage = (event: MessageEvent<FTWorkerToMain>) => this.handle(event.data);
   }
 
-  initialize(source: PackSource, options: FeatherTalkOptions): Promise<void> {
+  initialize(source: PackSource, options: RealisticOptions): Promise<void> {
     this.ready ??= new Promise<void>((resolve, reject) => {
       const offscreen = this.canvas?.transferControlToOffscreen();
       const previous = this.callbacks.onReady, previousError = this.callbacks.onError;

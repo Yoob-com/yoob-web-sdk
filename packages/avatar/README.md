@@ -322,8 +322,8 @@ Using your own voice stack? Call `mic.start()` and read `mic.on("audio", pcm => 
 | Id | Style | Engine | Download |
 |---|---|---|---|
 | `luna-anime` | Anime | `anime-web` | 37 MB |
-| `astrid`, `valentina`, `leonie`, `linda`, `santiago`, `julien`, `lars` | Realistic | `feathertalk-web` | 30-35 MB |
-| `lina`, `zoe`, `maya`, `ren`, `kofi`, `bruno` | Realistic | `feathertalk-web` | 30-31 MB |
+| `astrid`, `valentina`, `leonie`, `linda`, `santiago`, `julien`, `lars` | Realistic | `realistic-web` | 30-35 MB |
+| `lina`, `zoe`, `maya`, `ren`, `kofi`, `bruno` | Realistic | `realistic-web` | 30-31 MB |
 
 The realistic characters are the Luna app's: the character's own footage plays under the face along a head path that
 moves as she does when she listens or speaks, and only the lips are drawn, from the voice, 25 times a second, with the
