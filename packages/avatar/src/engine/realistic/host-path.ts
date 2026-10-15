@@ -1,4 +1,4 @@
-// HostPath (language-companions AvatarRuntime/HostPath.swift): the realistic head's path through the host clip, one host
+// HostPath (the Luna app's AvatarRuntime/HostPath.swift): the realistic head's path through the host clip, one host
 // frame per call frame, in the silence lanes while the lips are sealed and the speech lanes while they are not.
 import { type CalmHostWindow, type Crossing, within } from "./pack";
 

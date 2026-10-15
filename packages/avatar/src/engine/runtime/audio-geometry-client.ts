@@ -34,28 +34,28 @@ export class AudioGeometryClient {
   }
 
   static async create(
-    featherModel: ArrayBuffer,
+    encoderModel: ArrayBuffer,
     geometryModel: ArrayBuffer,
     onStatus: (message: string, stage?: string) => void,
     ortWasmUrl?: string,
   ): Promise<AudioGeometryClient> {
     const client = new AudioGeometryClient(onStatus);
-    await client.initialize(featherModel, geometryModel, ortWasmUrl);
+    await client.initialize(encoderModel, geometryModel, ortWasmUrl);
     return client;
   }
 
-  private initialize(featherModel: ArrayBuffer, geometryModel: ArrayBuffer, ortWasmUrl?: string): Promise<void> {
+  private initialize(encoderModel: ArrayBuffer, geometryModel: ArrayBuffer, ortWasmUrl?: string): Promise<void> {
     const ready = new Promise<void>((resolve, reject) => {
       this.initializationResolve = resolve;
       this.initializationReject = reject;
     });
     const message: AudioGeometryMainToWorker = {
       type: "initialize",
-      featherModel,
+      encoderModel,
       geometryModel,
       ortWasmUrl,
     };
-    this.worker.postMessage(message, [featherModel, geometryModel]);
+    this.worker.postMessage(message, [encoderModel, geometryModel]);
     return ready;
   }
 

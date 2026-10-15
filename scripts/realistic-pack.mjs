@@ -1,8 +1,12 @@
 #!/usr/bin/env node
-// Builds a FeatherTalk web character pack (packages/avatar/FORMAT.md) from a Luna app face folder and its ONNX models.
+// Builds a Realistic web character pack (packages/avatar/FORMAT.md) from a Luna app face folder and its ONNX models.
 //
-//   node scripts/feathertalk-pack.mjs --face <iOS face folder> --onnx <dir with renderer.onnx / renderer.fp16.onnx>
+//   node scripts/realistic-pack.mjs --face <iOS face folder> --onnx <dir with renderer.onnx / renderer.fp16.onnx>
 //        --encoder <encoder.onnx> --id <character id> --out <pack dir> [--renderer fp16|fp32] [--name <display name>]
+//        [--lip-picture <lip finish JSON>]
+//
+// The pack carries only what the SDK reads (no build paths or export notes): run the face folder and models through the
+// Luna app repo's anonymizer first (tools/anonymize_pack.py, tools/anonymize_models.py), so the identity is opaque.
 //
 // The face folder is only read. Every file taken from its pack is checked against the pack's own receipts first. The
 // output directory is replaced. Never point --out inside a committed folder: packs hold model weights (`packs/` is
@@ -24,13 +28,12 @@ if (!["fp16", "fp32"].includes(precision)) fail("--renderer must be fp16 or fp32
 
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
 const readJSON = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-function fail(message) { console.error(`feathertalk-pack: ${message}`); process.exit(1); }
+function fail(message) { console.error(`realistic-pack: ${message}`); process.exit(1); }
 
 // 1. The iOS face folder.
 const settings = readJSON(path.join(face, "face.json"));
 const packDir = path.join(face, settings.pack ?? "pack");
 const manifest = readJSON(path.join(packDir, "manifest.json"));
-const manifestSHA = sha256(fs.readFileSync(path.join(packDir, "manifest.json")));
 function verified(rel) {
   const receipt = manifest.files[rel];
   if (!receipt) fail(`${rel} has no receipt in ${packDir}/manifest.json`);
@@ -52,7 +55,6 @@ function check(ok, what) { if (!ok) fail(`${packDir}: ${what}`); }
 
 const calm = readJSON(path.join(face, "calm-window.json"));
 delete calm._doc;
-const poses = fs.existsSync(path.join(face, "host-poses.json")) ? readJSON(path.join(face, "host-poses.json")) : null;
 const still = readJSON(path.join(face, "still", "still.json"));
 check(still.host === calm.first, "still.host is not the calm window's first host (the app then shows no head path)");
 
@@ -70,11 +72,9 @@ const hevc = verified(videoFile);
 write("hosts.mp4", hevc);
 for (const name of ["base.jpg", ...still.blinks]) write(`still/${name}`, fs.readFileSync(path.join(face, "still", name)));
 
-// 3. Models. The ONNX export's own receipts (INDEX.json entry / export.json) are checked when present.
+// 3. Models. The ONNX export's own receipts (INDEX.json entry) are checked when present.
 const rendererName = precision === "fp16" ? "renderer.fp16.onnx" : "renderer.onnx";
 const renderer = fs.readFileSync(path.join(onnxDir, rendererName));
-const exportRecord = ["export.json", "parity.json"].map((name) => path.join(onnxDir, name)).filter(fs.existsSync)
-  .map((file) => ({ [path.basename(file)]: readJSON(file) })).reduce((all, one) => ({ ...all, ...one }), {});
 const indexFile = path.join(path.dirname(onnxDir), "INDEX.json");
 const indexEntry = fs.existsSync(indexFile) ? readJSON(indexFile).faces?.find((entry) => entry.id === path.basename(onnxDir)) : undefined;
 if (indexEntry) {
@@ -98,7 +98,7 @@ files["hosts.h264.mp4"] = { bytes: fs.statSync(h264Path).size, sha256: sha256(fs
 const psnr = /average:([0-9.]+|inf)/.exec(spawnSync("ffmpeg", ["-v", "info", "-i", h264Path, "-i", path.join(out, "hosts.mp4"),
   "-lavfi", "psnr", "-f", "null", "-"], { encoding: "utf8" }).stderr ?? "")?.[1];
 
-// 5. Face settings, as the app derives them (LipTiming.instantLips, LipPicture.face(identity:)).
+// 5. Face settings, as the app derives them (LipTiming.instantLips; the lip finish from --lip-picture).
 const lead = clampInt(settings.lipLeadMilliseconds ?? 0, 0, 200);
 const lookahead = Math.max(0, Math.min(12, settings.earlyLookaheadFrames ?? Math.round(lead / 40) + 1));
 const instantLips = {
@@ -111,7 +111,7 @@ const articulationGain = Number.isFinite(settings.articulationGain) ? Math.max(0
 function clampInt(value, low, high) { return Math.max(low, Math.min(high, Math.round(value))); }
 
 const pack = {
-  format: "feathertalk-web",
+  format: "realistic-web",
   schema: 1,
   id,
   name: args.name ?? settings.name ?? id,
@@ -127,7 +127,7 @@ const pack = {
   },
   models: {
     encoder: { file: "encoder.onnx", input: "audio", output: "hidden", batch: true },
-    renderer: { file: "renderer.onnx", image: "image", audio: "audio", output: "clip_0", precision },
+    renderer: { file: "renderer.onnx", image: "image", audio: "audio", output: rendererOutput(renderer), precision },
     closedAudio: "closed_audio.f32",
   },
   hosts: {
@@ -140,20 +140,14 @@ const pack = {
     ],
   },
   calmWindow: calm,
-  hostPoses: poses,
   still: {
     base: "still/base.jpg", host: still.host, rect: still.rect, sequence: still.sequence,
     blinks: still.blinks.map((name) => `still/${name}`),
   },
   face: { voice: settings.voice ?? null, lipLeadMilliseconds: lead, articulationGain },
   instantLips,
-  lipPicture: lipPicture(manifest.identity),
+  lipPicture: lipPicture(),
   files,
-  source: {
-    faceFolder: face, faceId: settings.id, iosManifestSHA256: manifestSHA, iosIdentity: manifest.identity,
-    iosRendererReceipt: manifest.source?.renderer ?? null, onnx: { dir: onnxDir, renderer: rendererName, index: indexEntry ?? null, ...exportRecord },
-    h264PSNR: psnr ? Number(psnr) : null, built: new Date().toISOString(),
-  },
 };
 fs.writeFileSync(path.join(out, "pack.json"), JSON.stringify(pack, null, 1));
 const total = Object.values(files).reduce((sum, file) => sum + file.bytes, 0);
@@ -233,27 +227,21 @@ function probeColour(file) {
 }
 
 /**
- * LipPicture.face(identity:) (language-companions AvatarRuntime/LipPicture.swift, with the astrid-b350 build's
- * Astrid B350 identity): the unsharp amount, the teeth's extra amount and the mouth region, or null.
+ * The lip finish the Luna app measured for this face (LipPicture: unsharp amount, teeth's extra amount, mouth region), from
+ * --lip-picture <file> ({"sharpen", "teeth", "mouth": {centerX, centerY, radiusX, radiusY, rotationDegrees, softness}}),
+ * or null: the whole square is pasted over the 8-pixel feather.
  */
-function lipPicture(identity) {
-  const softness = 24 / 288;
-  const table = {
-    "avatars20-r2-f01-valentina-e24": [1.2, 0.48, 0.38, 0.45, 0.28, 20, 1.5],
-    "avatars20-r2-f04-leonie-e24": [1.2, 0.48, 0.50, 0.45, 0.38, -20, 1.5],
-    "avatars20-r2-f08-astrid-e24": [1.2, 0.48, 0.54, 0.45, 0.38, -20, 1.5],
-    "astrid-exp-B350-e174": [1.2, 0.48, 0.54, 0.45, 0.38, -20, 1.5],
-    "avatars20-r2-m01-santiago-e49": [1.2, 0.50, 0.34, 0.30, 0.43, 0, 0],
-    "avatars20-r2-m03-julien-e24": [1.2, 0.42, 0.52, 0.50, 0.33, -20, 0],
-    "avatars20-r2-m05-lars-e19": [1.2, 0.44, 0.52, 0.55, 0.38, -20, 1.5],
-    "avatars20-r2-f10-linda-e24": [1.2, 0.56, 0.34, 0.30, 0.38, 20, 1.5],
-  };
-  // retrain144 (2026-10-12): <name>-144-e<epoch> packs keep the face's lip picture (LipPicture.face(identity:) maps them the same way).
-  const retrained = /^([a-z]+)-144-e\d+$/.exec(identity);
-  const byName = { valentina: "avatars20-r2-f01-valentina-e24", leonie: "avatars20-r2-f04-leonie-e24", astrid: "astrid-exp-B350-e174",
-    santiago: "avatars20-r2-m01-santiago-e49", julien: "avatars20-r2-m03-julien-e24", lars: "avatars20-r2-m05-lars-e19", linda: "avatars20-r2-f10-linda-e24" };
-  const values = table[retrained ? byName[retrained[1]] : identity];
-  if (!values) return null;
-  const [sharpen, centerX, centerY, radiusX, radiusY, rotationDegrees, teeth] = values;
-  return { sharpen, teeth, mouth: { centerX, centerY, radiusX, radiusY, rotationDegrees, softness } };
+function lipPicture() {
+  if (!args["lip-picture"]) return null;
+  const value = readJSON(expand(args["lip-picture"]));
+  const m = value.mouth;
+  if (!Number.isFinite(value.sharpen) || !Number.isFinite(value.teeth ?? 0)) fail("--lip-picture: sharpen and teeth");
+  if (m && !["centerX", "centerY", "radiusX", "radiusY", "rotationDegrees", "softness"].every((k) => Number.isFinite(m[k]))) fail("--lip-picture: mouth");
+  return { sharpen: value.sharpen, teeth: value.teeth ?? 0, mouth: m ?? null };
+}
+
+/** The renderer's output name, read from the ONNX graph (anonymized renderers name it "output"; earlier exports "clip_0"). */
+function rendererOutput(bytes) {
+  for (const name of ["output", "clip_0"]) if (bytes.includes(Buffer.from(name))) return name;
+  fail("renderer output name not found");
 }

@@ -1,7 +1,7 @@
-// The FeatherTalk encoder and renderer on ONNX Runtime Web (iOS: AvatarModels.swift).
+// The lip encoder and renderer on ONNX Runtime Web (iOS: AvatarModels.swift).
 import { createSession, ort } from "../inference/ort-runtime";
 import type { LipModels } from "./streaming";
-import type { CropGeometry, FeatherTalkPack } from "./pack";
+import type { CropGeometry, RealisticPack } from "./pack";
 
 const f32 = Math.fround;
 /** byte / 255 exactly as the iOS table (Float(b) / 255). */
@@ -9,7 +9,7 @@ const BYTE_SCALE = Float32Array.from({ length: 256 }, (_, b) => f32(b / 255));
 
 export interface ModelTimings { encodeMs: number; encodes: number; encodedWindows: number; renderMs: number; renders: number }
 
-export class FeatherTalkModels implements LipModels {
+export class RealisticModels implements LipModels {
   readonly timings: ModelTimings = { encodeMs: 0, encodes: 0, encodedWindows: 0, renderMs: 0, renders: 0 };
   private readonly mean: number;
   private readonly std: number;
@@ -20,20 +20,20 @@ export class FeatherTalkModels implements LipModels {
   private constructor(
     private readonly encoder: ort.InferenceSession,
     private readonly renderer: ort.InferenceSession,
-    private readonly pack: FeatherTalkPack,
+    private readonly pack: RealisticPack,
     private readonly geometry: CropGeometry,
   ) {
     this.mean = f32(pack.audio.waveformMean); this.std = f32(pack.audio.waveformStd);
     this.image = new Float32Array(6 * geometry.inner * geometry.inner);
   }
 
-  static async load(pack: FeatherTalkPack, geometry: CropGeometry, encoderModel: Uint8Array, rendererModel: Uint8Array,
-    providers: ("webgpu" | "wasm")[] = ["webgpu"]): Promise<FeatherTalkModels> {
+  static async load(pack: RealisticPack, geometry: CropGeometry, encoderModel: Uint8Array, rendererModel: Uint8Array,
+    providers: ("webgpu" | "wasm")[] = ["webgpu"]): Promise<RealisticModels> {
     // Warnings only (the renderer's constant-folding notes are expected).
     const quiet = { logSeverityLevel: 3 as const };
-    const renderer = await createSession(rendererModel, providers, "FeatherTalk renderer", undefined, quiet);
-    const encoder = await createSession(encoderModel, providers, "FeatherTalk encoder", undefined, quiet);
-    return new FeatherTalkModels(encoder, renderer, pack, geometry);
+    const renderer = await createSession(rendererModel, providers, "lip renderer", undefined, quiet);
+    const encoder = await createSession(encoderModel, providers, "lip encoder", undefined, quiet);
+    return new RealisticModels(encoder, renderer, pack, geometry);
   }
 
   /** The renderer's input crops of every host (iOS DerivedCrops), derived from the host video once at load. */

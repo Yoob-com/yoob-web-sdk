@@ -1,4 +1,4 @@
-// The FeatherTalk web pack (packages/avatar/FORMAT.md): its descriptor, checked at load as the iOS runtime checks a pack
+// The realistic web pack (packages/avatar/FORMAT.md): its descriptor, checked at load as the iOS runtime checks a pack
 // (AvatarPack, CropGeometry, LipWindows, CalmHostWindow.fits).
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -27,8 +27,16 @@ export interface MouthRegion {
 
 export interface LipPictureSettings { sharpen: number; teeth: number; mouth: MouthRegion | null }
 
-export interface FeatherTalkPack {
-  format: "feathertalk-web";
+/** The realistic engine's id: a CDN manifest's `engine` and a pack descriptor's `format`. */
+export const REALISTIC_ENGINE = "realistic-web";
+/** Characters published before 2026-10-12 carry the engine's earlier id. They load the same way: a web engine other than
+ *  the anime one whose manifest names a `pack.json` descriptor (`runtime.pack`) is this engine. */
+export function isRealisticEngine(id: unknown, runtimePack?: unknown): boolean {
+  return id === REALISTIC_ENGINE || (typeof id === "string" && id.endsWith("-web") && id !== "anime-web" && runtimePack === "pack.json");
+}
+
+export interface RealisticPack {
+  format: string;
   schema: 1;
   id: string;
   name: string;
@@ -59,12 +67,12 @@ export interface FeatherTalkPack {
 }
 
 export class PackError extends Error {
-  constructor(message: string) { super(`FeatherTalk pack rejected: ${message}`); this.name = "PackError"; }
+  constructor(message: string) { super(`Character pack rejected: ${message}`); this.name = "PackError"; }
 }
 
 /** LipWindows: the lip model's audio windows. */
 export class LipWindows {
-  static readonly h08 = new LipWindows(9, 16, 4, 8);
+  static readonly standard = new LipWindows(9, 16, 4, 8);
   constructor(readonly lookahead: number, readonly left: number, readonly right: number, readonly bootstrap: number) {}
 
   static from(values: { lookahead: number; left: number; right: number; bootstrap: number }): LipWindows | undefined {
@@ -101,7 +109,7 @@ export class LipWindows {
 /** CropGeometry. */
 export class CropGeometry {
   constructor(readonly inner: number, readonly output: number, readonly outer: number, readonly hole: Rect) {}
-  static from(g: FeatherTalkPack["geometry"]): CropGeometry | undefined {
+  static from(g: RealisticPack["geometry"]): CropGeometry | undefined {
     const { inner, output, outer, hole } = g;
     if (!(inner >= 16 && inner <= 1024 && output >= inner && output % inner === 0 && outer <= 4096 && outer % (output / inner) === 0)) return undefined;
     const face = outer / (output / inner);
@@ -201,15 +209,16 @@ const WINDOW_FRAMES = [8, 13, 14, 15, 16, 17, 18, 19, 20, 21];
 
 /** The checked pack: its windows, geometry and head path. Throws PackError on anything iOS would refuse. */
 export interface CheckedPack {
-  pack: FeatherTalkPack;
+  pack: RealisticPack;
   windows: LipWindows;
   geometry: CropGeometry;
   calm: CalmHostWindow;
 }
 
 export function checkPack(value: unknown): CheckedPack {
-  const pack = value as FeatherTalkPack;
-  if (!pack || pack.format !== "feathertalk-web") throw new PackError("not a feathertalk-web pack");
+  const pack = value as RealisticPack;
+  // A descriptor of the engine's earlier id has the same schema.
+  if (!pack || !isRealisticEngine(pack.format, "pack.json")) throw new PackError(`not a ${REALISTIC_ENGINE} pack`);
   if (pack.schema !== 1) throw new PackError(`schema ${String(pack.schema)} is not supported`);
   const a = pack.audio;
   if (!(a && a.sampleRate === 16000 && a.fps === 25 && a.samplesPerFrame === 640 && a.encoderTailSamples === 80

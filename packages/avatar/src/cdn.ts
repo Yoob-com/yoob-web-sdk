@@ -20,7 +20,10 @@ export interface CharacterManifest {
 }
 
 export interface WebRuntimeSettings {
-  assetVersion: string;
+  /** The anime engine's asset cache key (the manifest version when absent). */
+  assetVersion?: string;
+  /** The realistic engine: the pack descriptor's path in the manifest (`pack.json`). */
+  pack?: string;
   neuralMouthStride?: 1 | 2;
   rendererInputType?: "float32" | "float16";
   rendererPreferredLayout?: "NCHW" | "NHWC";
@@ -52,7 +55,7 @@ export class YoobError extends Error {
   }
 }
 
-export const SDK_VERSION = "0.4.0";
+export const SDK_VERSION = "0.5.0";
 
 /** Public keys whose manifest signatures the SDK accepts, by key id. */
 const SIGNING_KEYS: Record<string, string> = {

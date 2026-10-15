@@ -3,7 +3,8 @@ import {
   type CharacterManifest,
 } from "./cdn";
 import { ConversationAudio, type RemoteAudioTrack } from "./engine/audio/conversation-audio";
-import { FeatherTalkCoordinator } from "./engine/feathertalk/coordinator";
+import { RealisticCoordinator } from "./engine/realistic/coordinator";
+import { REALISTIC_ENGINE, isRealisticEngine } from "./engine/realistic/pack";
 import { RenderCoordinator } from "./engine/runtime/render-coordinator";
 import type { RendererSpatialContract } from "./engine/runtime/generated/runtime-tier-contract";
 import type { RendererTemporalContract } from "./engine/runtime/renderer-temporal";
@@ -54,7 +55,7 @@ export interface YoobAvatarOptions {
   /** Character id, for example `"luna-anime"` or `"astrid"`. */
   character: string;
   /**
-   * Development only: load a FeatherTalk character pack (packages/avatar/FORMAT.md) from this URL instead of the Yoob
+   * Development only: load a realistic character pack (packages/avatar/FORMAT.md) from this URL instead of the Yoob
    * CDN. No session is opened and nothing is metered; `getCredentials` is not called. Never ship a page with this set.
    */
   packUrl?: string;
@@ -124,9 +125,9 @@ export class YoobAvatar {
   private coordinator?: AvatarEngine;
   /** The voice output and microphone, shared by whichever engine draws the character. */
   private readonly audioOut = new ConversationAudio();
-  /** The character's engine, once its manifest is known: `anime-web` or `feathertalk-web`. */
+  /** The character's engine, once its manifest is known: `anime-web` or `realistic-web`. */
   private engineKind?: string;
-  private featherCanvas?: HTMLCanvasElement;
+  private realisticCanvas?: HTMLCanvasElement;
   private credentials?: YoobCredentials;
   private manifestValue?: CharacterManifest;
   private preparing?: Promise<void>;
@@ -309,7 +310,7 @@ export class YoobAvatar {
 
   private engine(): AvatarEngine {
     this.checkUsable();
-    if (this.engineKind === "feathertalk-web") {
+    if (this.engineKind === REALISTIC_ENGINE) {
       if (!this.coordinator) throw new YoobError("renderer", "Call prepare() before speak().");
       return this.coordinator;
     }
@@ -322,18 +323,18 @@ export class YoobAvatar {
     return this.coordinator;
   }
 
-  /** The FeatherTalk engine on its own canvas (a WebGPU canvas drawn from a worker). */
-  private featherTalk(): FeatherTalkCoordinator {
-    if (this.coordinator instanceof FeatherTalkCoordinator) return this.coordinator;
+  /** The realistic engine on its own canvas (a WebGPU canvas drawn from a worker). */
+  private realisticEngine(): RealisticCoordinator {
+    if (this.coordinator instanceof RealisticCoordinator) return this.coordinator;
     this.coordinator?.destroy();
     const canvas = document.createElement("canvas");
     Object.assign(canvas.style, { position: "absolute", inset: "0", width: "100%", height: "100%",
       objectFit: this.options.fit ?? "cover", opacity: "0", transition: "opacity 200ms ease" });
     this.canvas.style.display = "none";
     this.root.append(canvas);
-    this.featherCanvas?.remove();
-    this.featherCanvas = canvas;
-    const coordinator = new FeatherTalkCoordinator(canvas, this.audioOut, {
+    this.realisticCanvas?.remove();
+    this.realisticCanvas = canvas;
+    const coordinator = new RealisticCoordinator(canvas, this.audioOut, {
       onPlaybackEnded: () => this.finishUtterance(),
       onError: (message) => this.options.onError?.(new YoobError("renderer", message)),
     });
@@ -341,10 +342,10 @@ export class YoobAvatar {
     return coordinator;
   }
 
-  /** Loads a FeatherTalk character (`feathertalk-web`) from the CDN manifest or, in development, a pack URL. */
-  private async loadFeatherTalk(store: ChunkStore | undefined, manifest: CharacterManifest | undefined): Promise<void> {
-    this.engineKind = "feathertalk-web";
-    const coordinator = this.featherTalk();
+  /** Loads a realistic character (`realistic-web`) from the CDN manifest or, in development, a pack URL. */
+  private async loadRealistic(store: ChunkStore | undefined, manifest: CharacterManifest | undefined): Promise<void> {
+    this.engineKind = REALISTIC_ENGINE;
+    const coordinator = this.realisticEngine();
     let workerStart = 0, total = 0;
     if (store && manifest) {
       total = manifest.files.reduce((sum, file) => sum + file.size, 0);
@@ -369,7 +370,7 @@ export class YoobAvatar {
       cadence: this.options.lipCadence === "step" ? "step" : "blend",
       ortWasmUrl: store ? `${this.cdnBase}/${ORT_WASM_PATH}` : undefined,
     }));
-    if (this.featherCanvas) this.featherCanvas.style.opacity = "1";
+    if (this.realisticCanvas) this.realisticCanvas.style.opacity = "1";
   }
 
   private async load(): Promise<void> {
@@ -378,8 +379,8 @@ export class YoobAvatar {
     this.stoppedError = undefined;
     this.setPhase("downloading");
     if (this.options.packUrl) {
-      // Development: a local FeatherTalk pack, no session.
-      await this.loadFeatherTalk(undefined, undefined);
+      // Development: a local realistic pack, no session.
+      await this.loadRealistic(undefined, undefined);
       this.options.onProgress?.({ completedBytes: 1, totalBytes: 1, fraction: 1 });
       this.setPhase("ready");
       return;
@@ -396,8 +397,8 @@ export class YoobAvatar {
     this.manifestValue = manifest;
     this.root.setAttribute("aria-label", manifest.displayName);
     const runtime = manifest.runtime;
-    if (manifest.engine === "feathertalk-web") {
-      await this.loadFeatherTalk(new ChunkStore(access, manifest), manifest);
+    if (isRealisticEngine(manifest.engine, runtime?.pack)) {
+      await this.loadRealistic(new ChunkStore(access, manifest), manifest);
       this.options.onProgress?.({ completedBytes: 1, totalBytes: 1, fraction: 1 });
       void pruneChunkCache([manifest]).catch(() => undefined);
       if (!this.monitor?.active) throw this.stoppedError ?? new YoobError("session-ended", "The Yoob session has stopped.");
@@ -558,7 +559,7 @@ export class YoobAvatar {
     this.coordinator?.destroy();
     this.coordinator = undefined;
     this.canvas.style.opacity = "0";
-    if (this.featherCanvas) this.featherCanvas.style.opacity = "0";
+    if (this.realisticCanvas) this.realisticCanvas.style.opacity = "0";
     this.video.removeAttribute("src");
     this.video.load();
     this.setPhase("stopped");

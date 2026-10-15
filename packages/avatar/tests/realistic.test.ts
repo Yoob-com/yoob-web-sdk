@@ -1,13 +1,13 @@
-// The FeatherTalk engine's pure parts (the Luna app's StreamingAvatar, HostPath, LipWindows, LipCrossfade) without a GPU.
+// The realistic engine's pure parts (the Luna app's StreamingAvatar, HostPath, LipWindows, LipCrossfade) without a GPU.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resample24kTo16k } from "../src/engine/audio/resample-24k-16k";
-import { StreamingResampler24To16 } from "../src/engine/feathertalk/resample";
-import { CalmHostWindow, LipWindows, PackError, checkPack } from "../src/engine/feathertalk/pack";
-import { HostPath } from "../src/engine/feathertalk/host-path";
-import { type LipModels, StreamingAvatar, speechBlinkSet } from "../src/engine/feathertalk/streaming";
-import { LipCrossfade, LipFade } from "../src/engine/feathertalk/fade";
-import { areaResize, lanczosTaps, roundHalfEven } from "../src/engine/feathertalk/image-ops";
+import { StreamingResampler24To16 } from "../src/engine/realistic/resample";
+import { CalmHostWindow, LipWindows, PackError, REALISTIC_ENGINE, checkPack, isRealisticEngine } from "../src/engine/realistic/pack";
+import { HostPath } from "../src/engine/realistic/host-path";
+import { type LipModels, StreamingAvatar, speechBlinkSet } from "../src/engine/realistic/streaming";
+import { LipCrossfade, LipFade } from "../src/engine/realistic/fade";
+import { areaResize, lanczosTaps, roundHalfEven } from "../src/engine/realistic/image-ops";
 
 function random(seed: number): () => number {
   let s = seed >>> 0;
@@ -31,8 +31,8 @@ test("the streaming 24-to-16 kHz resampler equals the one-shot one however the a
   for (let i = 0; i < whole.length; i += 1) assert.ok(Math.abs(joined[i] - whole[i]) < 1e-6, `sample ${i}`);
 });
 
-test("lip windows: H08's bootstrap encode, then one 13-21 frame window per feature", () => {
-  const w = LipWindows.h08;
+test("lip windows: the standard windows' bootstrap encode, then one 13-21 frame window per feature", () => {
+  const w = LipWindows.standard;
   assert.deepEqual(w.encode(0), { low: 0, high: 8, first: 0, last: 8 });
   assert.deepEqual(w.encode(8), { low: 0, high: 13, first: 8, last: 9 });
   assert.deepEqual(w.encode(20), { low: 4, high: 25, first: 20, last: 21 });
@@ -82,7 +82,7 @@ class FakeModels implements LipModels {
 }
 
 function pipeline(models: LipModels, lookaheadFrames = 1): StreamingAvatar {
-  return new StreamingAvatar(models, LipWindows.h08, new CalmHostWindow(calmJSON), new Float32Array(40 * 1024),
+  return new StreamingAvatar(models, LipWindows.standard, new CalmHostWindow(calmJSON), new Float32Array(40 * 1024),
     speechBlinkSet([0, 1, 2]), 12, { lookaheadFrames, batchFrames: 1, standIn: "mirror" });
 }
 
@@ -156,6 +156,16 @@ test("image ops: rounding, Lanczos taps sum to 2048, area resize of a flat pictu
 });
 
 test("a pack that iOS would refuse is refused", () => {
+  assert.throws(() => checkPack({ format: "realistic-web", schema: 2 }), PackError);
   assert.throws(() => checkPack({ format: "feathertalk-web", schema: 2 }), PackError);
   assert.throws(() => checkPack({ format: "anime-web" }), PackError);
+});
+
+test("both engine ids load: realistic-web, and the id of characters published before 2026-10-12", () => {
+  assert.equal(REALISTIC_ENGINE, "realistic-web");
+  assert.ok(isRealisticEngine("realistic-web"));
+  assert.ok(isRealisticEngine("feathertalk-web", "pack.json"), "an earlier manifest: its runtime names pack.json");
+  assert.ok(!isRealisticEngine("feathertalk-web"), "without a pack.json descriptor it is not this engine");
+  assert.ok(!isRealisticEngine("anime-web", "pack.json"));
+  assert.ok(!isRealisticEngine(undefined));
 });

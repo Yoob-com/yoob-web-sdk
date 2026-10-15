@@ -1,4 +1,4 @@
-// The FeatherTalk engine's worker: pack load, lip pipeline (encoder + renderer), host video, GPU compose and display on
+// The realistic engine's worker: pack load, lip pipeline (encoder + renderer), host video, GPU compose and display on
 // an OffscreenCanvas at the audible clock. The page sends audio and the audible position; nothing else crosses threads.
 import { ChunkStore } from "../../cdn";
 import { setOrtWasmUrl } from "../inference/ort-runtime";
@@ -7,9 +7,9 @@ import { FrameCompositor, type BlinkTexture, type HostPlanes } from "./composito
 import { LipCrossfade, LipFade, SAMPLES_PER_FRAME } from "./fade";
 import { HostVideoDecoder, pickVideo } from "./host-video";
 import { mouthMatte, teethRegion, whiteBars } from "./image-ops";
-import { FeatherTalkModels } from "./models";
+import { RealisticModels } from "./models";
 import { type CheckedPack, PackError, checkPack } from "./pack";
-import type { FTMainToWorker, FTStats, FTWorkerToMain, FeatherTalkOptions, PackSource } from "./protocol";
+import type { FTMainToWorker, FTStats, FTWorkerToMain, RealisticOptions, PackSource } from "./protocol";
 import { StreamingResampler24To16 } from "./resample";
 import { CancelledError, type FrameJob, StreamingAvatar, speechBlinkSet } from "./streaming";
 
@@ -52,7 +52,7 @@ async function sha256(data: Uint8Array): Promise<string> {
 class Runtime {
   private checked!: CheckedPack;
   private files!: FileSource;
-  private models!: FeatherTalkModels;
+  private models!: RealisticModels;
   private compositor!: FrameCompositor;
   private decoder!: HostVideoDecoder;
   private pipeline!: StreamingAvatar;
@@ -105,11 +105,11 @@ class Runtime {
   /** Where the load's time went (ms), for diagnostics. */
   readonly loadTimings: Record<string, number> = {};
 
-  async load(source: PackSource, canvas: OffscreenCanvas | undefined, options: FeatherTalkOptions): Promise<void> {
+  async load(source: PackSource, canvas: OffscreenCanvas | undefined, options: RealisticOptions): Promise<void> {
     let mark = performance.now();
     const lap = (name: string) => {
       const now = performance.now(); this.loadTimings[name] = Math.round(now - mark); mark = now;
-      console.debug(`feathertalk: ${name} ${this.loadTimings[name]} ms`);
+      console.debug(`realistic: ${name} ${this.loadTimings[name]} ms`);
     };
     this.offline = options.offline; this.cadence = options.cadence;
     if (options.ortWasmUrl) setOrtWasmUrl(options.ortWasmUrl);
@@ -140,9 +140,9 @@ class Runtime {
     if (closedAudio.length !== 40 * 1024 || !closedAudio.every(Number.isFinite)) throw new PackError("closed audio");
     this.decoder = new HostVideoDecoder(video, videoBytes, pack.hosts.width, pack.hosts.height);
 
-    this.models = await FeatherTalkModels.load(pack, geometry, encoderModel, rendererModel);
+    this.models = await RealisticModels.load(pack, geometry, encoderModel, rendererModel);
     lap("sessions");
-    const device = await FeatherTalkModels.device();
+    const device = await RealisticModels.device();
     if (!device) throw new Error("WebGPU is unavailable for the face compositor");
     this.device = device;
     const info = (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo;

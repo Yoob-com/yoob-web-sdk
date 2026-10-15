@@ -6,7 +6,7 @@ const HOP = 320;
 const CONV_STRIDE = 320;
 const FIRST_CENTER = 199.5;
 
-export class FeatherHuBERT {
+export class AudioFeatures {
   private silence?: Float32Array;
 
   private constructor(private readonly session: ort.InferenceSession) {}
@@ -15,8 +15,8 @@ export class FeatherHuBERT {
     // ORT WebGPU session creation can hang indefinitely for this small encoder
     // instead of rejecting, which prevents provider fallback. Threaded WASM is
     // fast enough for Feather and leaves WebGPU available for the renderer.
-    return new FeatherHuBERT(await createSession(
-      model, ["wasm"], "FeatherHuBERT",
+    return new AudioFeatures(await createSession(
+      model, ["wasm"], "AudioFeatures",
     ));
   }
 
@@ -46,7 +46,7 @@ export class FeatherHuBERT {
       const result = await this.session.run({ audio: input });
       tensor = result.hidden;
       if (!tensor || tensor.dims.length !== 3 || tensor.dims[2] !== 1024) {
-        throw new Error(`bad FeatherHuBERT output ${tensor?.dims}`);
+        throw new Error(`bad AudioFeatures output ${tensor?.dims}`);
       }
       const hidden = tensor.data as Float32Array;
       const encoderFrames = tensor.dims[1];
@@ -55,7 +55,7 @@ export class FeatherHuBERT {
         const target = (2 * frame + 1 + shift) * HOP;
         const position = (target - windowStart - FIRST_CENTER) / CONV_STRIDE;
         if (position < 0 || position > encoderFrames - 1) {
-          throw new Error(`FeatherHuBERT frame ${frame} outside encoder support`);
+          throw new Error(`AudioFeatures frame ${frame} outside encoder support`);
         }
         const left = Math.floor(position);
         const right = Math.min(left + 1, encoderFrames - 1);

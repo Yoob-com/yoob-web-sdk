@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+The realistic engine is `realistic-web`. No API break.
+
+- Characters published since 2026-10-12 (the 13 realistic characters at 2026.10.12.2) name the engine `realistic-web` and
+  need 0.5.0 (`minSDK`); 0.4.0 says so instead of failing later. Manifests and packs of the engine's earlier id
+  (`feathertalk-web`) load as before.
+- Packs carry only what the engine reads; the renderer's output name comes from `pack.json` as before.
+- `scripts/realistic-pack.mjs` (was `scripts/feathertalk-pack.mjs`) takes the lip finish with `--lip-picture <file>`.
+
 ## 0.4.0
 
 The Luna app's realistic characters in the browser: Astrid, Valentina, Leonie, Linda, Santiago, Julien, Lars, Lina, Zoe,

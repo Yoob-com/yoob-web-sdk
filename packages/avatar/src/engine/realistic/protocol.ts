@@ -5,7 +5,7 @@ export type PackSource =
   | { kind: "cdn"; cdnBase: string; downloadToken: string; manifest: CharacterManifest; pack: string }
   | { kind: "url"; base: string };
 
-export interface FeatherTalkOptions {
+export interface RealisticOptions {
   /** Display cross-fades between lip frames (`blend`) or whole frames (`step`). */
   cadence: "blend" | "step";
   /**
@@ -20,7 +20,7 @@ export interface FeatherTalkOptions {
 }
 
 export type FTMainToWorker =
-  | { type: "init"; source: PackSource; canvas?: OffscreenCanvas; options: FeatherTalkOptions; timeOrigin: number }
+  | { type: "init"; source: PackSource; canvas?: OffscreenCanvas; options: RealisticOptions; timeOrigin: number }
   | { type: "begin"; utterance: number }
   /** 24 kHz mono samples of the utterance. */
   | { type: "audio"; utterance: number; samples: Float32Array }

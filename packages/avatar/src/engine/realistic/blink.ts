@@ -1,4 +1,4 @@
-// IdleBlinkSchedule and SpeechBlinkGate (language-companions AvatarRuntime/IdleBlink.swift, SpeechBlink.swift).
+// IdleBlinkSchedule and SpeechBlinkGate (the Luna app's AvatarRuntime/IdleBlink.swift, SpeechBlink.swift).
 import type { CalmHostWindow } from "./pack";
 
 const MASK = (1n << 64n) - 1n;
