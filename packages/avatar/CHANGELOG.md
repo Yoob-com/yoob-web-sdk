@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0
+
+Encrypted character packs. No API break; the realistic characters at 2026.10.15.1 need 0.6.0 (`minSDK`), and 0.5.0 says
+so instead of loading.
+
+- A manifest with `encryption` names its release's content key. After the manifest, the SDK asks the Yoob API for that
+  key with the session token (`POST /api/v1/sessions/keys`), which answers only while the session is open and its
+  heartbeats are live, and imports it as a non-extractable CryptoKey that is passed to the render worker and never stored.
+- Sealed chunks (`plain` in the manifest) are fetched and cached as ciphertext under their own address and decrypted in
+  memory (AES-256-GCM) right before ONNX Runtime, WebCodecs or the compositor gets them; the plaintext hash of every chunk
+  and file is checked as before. A chunk that does not open is an `invalid-assets` error; a refused key is `unauthorized`.
+- Each workspace's realistic characters carry their own marked footage alongside their own renderer variant; nothing
+  changes in the SDK for that.
+
 ## 0.5.0
 
 The realistic engine is `realistic-web`. No API break.

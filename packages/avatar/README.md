@@ -6,7 +6,10 @@ with no provider key. You can also bring your own OpenAI Realtime, Gemini Live o
 
 - **Light.** About 20 KB gzipped to start. Rendering workers load when a character is created, and character files
   (37 MB) stream from `cdn.yoob.com` in verified chunks cached in the browser. On a good connection the character
-  appears in about half a second, and a returning visitor is ready in about one.
+  appears in about half a second, and a returning visitor is ready in about one. Encrypted characters (the realistic
+  characters since 2026.10.15.1) are cached encrypted: the session asks Yoob for the character's key
+  (`POST /api/v1/sessions/keys`, answered only while the session's heartbeats are live) and the SDK decrypts each chunk
+  in memory, never storing the decrypted files.
 - **Private.** Faces render on the visitor's GPU. Conversation audio goes only to the voice service you choose. See
   [Network](#network).
 

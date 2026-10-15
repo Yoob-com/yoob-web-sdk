@@ -1,7 +1,11 @@
 // Character packs on cdn.yoob.com: signed manifests and content-addressed, verified chunks.
 // Used by the page (manifest, poster, idle video) and by the render worker (models and banks).
 
-export interface ManifestChunk { sha256: string; size: number }
+/**
+ * One chunk of a file. A sealed chunk (encrypted packs) is fetched and cached as stored: `sha256` and `size` are its
+ * ciphertext's, and `plain` is the SHA-256 of the bytes it opens to (`size - 16`).
+ */
+export interface ManifestChunk { sha256: string; size: number; plain?: string }
 export interface ManifestFile { path: string; size: number; sha256: string; tier: number; chunks: ManifestChunk[] }
 
 export interface CharacterManifest {
@@ -16,8 +20,12 @@ export interface CharacterManifest {
   idle: { frames: string[]; fps: number };
   minSDK: string;
   runtime?: WebRuntimeSettings;
+  /** Encrypted packs: the release's content key id, released per session by the Yoob API (`releaseContentKey`). */
+  encryption?: PackEncryption;
   files: ManifestFile[];
 }
+
+export interface PackEncryption { scheme: "yoob-chunk-v1"; alg: "A256GCM"; keyId: string }
 
 export interface WebRuntimeSettings {
   /** The anime engine's asset cache key (the manifest version when absent). */
@@ -35,6 +43,11 @@ export interface CdnAccess {
   cdnBase: string;
   /** Read before every request, so a grant renewed by a heartbeat is used from the next request on. */
   downloadToken: string;
+  /**
+   * The content key of an encrypted pack (non-extractable AES-GCM, `releaseContentKey`). Sealed chunks are cached as
+   * ciphertext and opened in memory only.
+   */
+  contentKey?: CryptoKey;
 }
 
 export class YoobError extends Error {
@@ -55,7 +68,7 @@ export class YoobError extends Error {
   }
 }
 
-export const SDK_VERSION = "0.5.0";
+export const SDK_VERSION = "0.6.0";
 
 /** Public keys whose manifest signatures the SDK accepts, by key id. */
 const SIGNING_KEYS: Record<string, string> = {
@@ -93,6 +106,8 @@ function safePath(path: string): boolean {
     && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
 const SHA = /^[0-9a-f]{64}$/;
+const CONTENT_KEY_ID = /^ck1:[a-z0-9][a-z0-9-]{0,63}:[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{1,4}:[0-9a-f]{32}$/;
+const TAG_BYTES = 16;
 
 export function validateManifest(manifest: CharacterManifest): void {
   const fail = (why: string) => { throw new YoobError("invalid-assets", `Character manifest rejected: ${why}.`); };
@@ -101,11 +116,18 @@ export function validateManifest(manifest: CharacterManifest): void {
     throw new YoobError("unsupported", `${manifest.character} ${manifest.version} needs @yoob/avatar ${manifest.minSDK} or newer.`);
   }
   const seen = new Set<string>();
+  const encryption = manifest.encryption;
+  if (encryption !== undefined && (encryption.scheme !== "yoob-chunk-v1" || encryption.alg !== "A256GCM"
+    || typeof encryption.keyId !== "string" || !CONTENT_KEY_ID.test(encryption.keyId))) {
+    throw new YoobError("unsupported", "This character's encryption is not supported by this SDK version.");
+  }
   for (const file of manifest.files) {
     if (!safePath(file.path) || seen.has(file.path)) fail(`path ${file.path}`);
     seen.add(file.path);
-    if (!SHA.test(file.sha256) || file.chunks.reduce((n, c) => n + c.size, 0) !== file.size) fail(`entry ${file.path}`);
-    if (!file.chunks.every((c) => SHA.test(c.sha256) && c.size > 0 && c.size <= 16 << 20)) fail(`chunks of ${file.path}`);
+    const opened = (c: ManifestChunk) => (c.plain === undefined ? c.size : c.size - TAG_BYTES);
+    if (!SHA.test(file.sha256) || file.chunks.reduce((n, c) => n + opened(c), 0) !== file.size) fail(`entry ${file.path}`);
+    if (!file.chunks.every((c) => SHA.test(c.sha256) && c.size > 0 && c.size <= 16 << 20
+      && (c.plain === undefined || (SHA.test(c.plain) && c.size > TAG_BYTES && encryption !== undefined)))) fail(`chunks of ${file.path}`);
   }
   if (!seen.has(manifest.poster)) fail("missing poster");
 }
@@ -199,7 +221,7 @@ export class ChunkStore {
     const output = new Uint8Array(file.size);
     const offsets: number[] = [];
     let offset = 0;
-    for (const chunk of file.chunks) { offsets.push(offset); offset += chunk.size; }
+    for (const chunk of file.chunks) { offsets.push(offset); offset += chunk.plain === undefined ? chunk.size : chunk.size - TAG_BYTES; }
     let next = 0;
     const worker = async () => {
       while (next < file.chunks.length) {
@@ -217,25 +239,96 @@ export class ChunkStore {
 
   private async chunk(chunk: ManifestChunk, onBytes: (bytes: number, cached: boolean) => void): Promise<ArrayBuffer> {
     const url = `${trim(this.access.cdnBase)}/v1/chunks/${chunk.sha256}`;
+    const opened = chunk.plain === undefined ? chunk.size : chunk.size - TAG_BYTES;
     const cache = await this.openCache();
     const cached = await cache?.match(url).catch(() => undefined);
     if (cached) {
       const data = await cached.arrayBuffer();
-      if (data.byteLength === chunk.size && await sha256Hex(data) === chunk.sha256) {
-        onBytes(chunk.size, true);
-        return data;
+      const usable = chunk.plain === undefined
+        ? (data.byteLength === chunk.size && await sha256Hex(data) === chunk.sha256 ? data : undefined)
+        : (data.byteLength === chunk.size ? await this.open(chunk, data).catch(() => undefined) : undefined);
+      if (usable) {
+        onBytes(opened, true);
+        return usable;
       }
       await cache?.delete(url).catch(() => undefined);
     }
     const response = await request(url, this.access);
     const data = await response.arrayBuffer();
-    if (data.byteLength !== chunk.size || await sha256Hex(data) !== chunk.sha256) {
+    // A sealed chunk's integrity is its AES-GCM tag plus the plaintext hash checked in `open`.
+    if (data.byteLength !== chunk.size || (chunk.plain === undefined && await sha256Hex(data) !== chunk.sha256)) {
       throw new YoobError("invalid-assets", `Chunk ${chunk.sha256.slice(0, 12)} failed verification.`);
     }
+    const plain = chunk.plain === undefined ? data : await this.open(chunk, data);
+    // Only what the CDN served is cached: ciphertext for sealed chunks, never their plaintext.
     await cache?.put(url, new Response(data, { headers: { "content-type": "application/octet-stream" } })).catch(() => undefined);
-    onBytes(chunk.size, false);
-    return data;
+    onBytes(opened, false);
+    return plain;
   }
+
+  /** Opens a sealed chunk in memory with the session's content key and checks the plaintext hash. */
+  private async open(chunk: ManifestChunk, sealed: ArrayBuffer): Promise<ArrayBuffer> {
+    const key = this.access.contentKey;
+    if (!key || !chunk.plain) throw new YoobError("unauthorized", "This character is encrypted and the session has no content key.");
+    const aad = new TextEncoder().encode(chunk.plain);
+    const iv = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`yoob-chunk-v1:iv:${chunk.plain}`))).slice(0, 12);
+    let plain: ArrayBuffer;
+    try {
+      plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad, tagLength: 128 }, key, sealed);
+    } catch {
+      throw new YoobError("invalid-assets", `Chunk ${chunk.sha256.slice(0, 12)} did not open with the session's content key.`);
+    }
+    if (plain.byteLength !== chunk.size - TAG_BYTES || await sha256Hex(plain) !== chunk.plain) {
+      throw new YoobError("invalid-assets", `Chunk ${chunk.sha256.slice(0, 12)} failed verification.`);
+    }
+    return plain;
+  }
+}
+
+/**
+ * Asks the Yoob API for an encrypted pack's content key (`POST /api/v1/sessions/keys`). Yoob answers only while the
+ * session is open and its heartbeats are live, for the session's own characters. The key comes back as a
+ * non-extractable AES-GCM CryptoKey: it can be passed to a worker but never read back, and it is never stored.
+ */
+export async function releaseContentKey(apiBase: string, sessionToken: string, keyId: string, signal?: AbortSignal): Promise<CryptoKey> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 << attempt));
+    let response: Response;
+    try {
+      response = await fetch(`${trim(apiBase)}/api/v1/sessions/keys`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json", "x-yoob-sdk": `yoob-web/${SDK_VERSION}` },
+        body: JSON.stringify({ key_ids: [keyId] }),
+        cache: "no-store", credentials: "omit", mode: "cors", signal,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      lastError = new YoobError("network", `Key request failed: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    if (response.ok) {
+      const body = await response.json() as { keys?: { key_id: string; key: string }[] };
+      const entry = body.keys?.find((k) => k.key_id === keyId);
+      if (!entry) throw new YoobError("invalid-assets", "The Yoob API did not return this character's content key.");
+      const raw = base64ToBytes(entry.key);
+      try {
+        if (raw.byteLength !== 32) throw new YoobError("invalid-assets", "The character's content key is malformed.");
+        return await crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["decrypt"]);
+      } finally {
+        raw.fill(0);
+      }
+    }
+    if (response.status === 402) throw new YoobError("out-of-credit", "This Yoob workspace cannot open more sessions right now.");
+    if (response.status === 401 || response.status === 403 || response.status === 404) {
+      throw new YoobError("unauthorized", "Yoob refused this session's content key. Fetch a new session from your backend.");
+    }
+    if (response.status === 400 || response.status === 503) {
+      throw new YoobError("unsupported", "Yoob cannot release this character's content key.");
+    }
+    lastError = new YoobError("network", `Key request failed (HTTP ${response.status}).`);
+  }
+  throw lastError;
 }
 
 /** Deletes cached chunks that no manifest in `keep` references. */
