@@ -2,7 +2,7 @@ import type { CharacterManifest } from "../../cdn";
 
 /** Where a pack's files come from: the Yoob CDN (signed manifest, verified chunks) or a plain URL (development). */
 export type PackSource =
-  | { kind: "cdn"; cdnBase: string; downloadToken: string; manifest: CharacterManifest; pack: string }
+  | { kind: "cdn"; cdnBase: string; downloadToken: string; manifest: CharacterManifest; pack: string; contentKey?: CryptoKey }
   | { kind: "url"; base: string };
 
 export interface RealisticOptions {

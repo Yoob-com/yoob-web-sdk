@@ -30,7 +30,9 @@ interface Composed { frame: number; texture: GPUTexture; host: number; raw: numb
 class FileSource {
   private readonly store?: ChunkStore;
   constructor(private readonly source: PackSource) {
-    if (source.kind === "cdn") this.store = new ChunkStore({ cdnBase: source.cdnBase, downloadToken: source.downloadToken }, source.manifest);
+    if (source.kind === "cdn") {
+      this.store = new ChunkStore({ cdnBase: source.cdnBase, downloadToken: source.downloadToken, contentKey: source.contentKey }, source.manifest);
+    }
   }
   grant(token: string): void { if (this.source.kind === "cdn") (this.store as unknown as { access: { downloadToken: string } }).access.downloadToken = token; }
   async bytes(path: string, onBytes?: (n: number) => void): Promise<Uint8Array> {

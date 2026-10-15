@@ -1,5 +1,5 @@
 import {
-  ChunkStore, SDK_VERSION, YoobError, clearChunkCache, fetchManifest, pruneChunkCache,
+  ChunkStore, SDK_VERSION, YoobError, clearChunkCache, fetchManifest, pruneChunkCache, releaseContentKey,
   type CharacterManifest,
 } from "./cdn";
 import { ConversationAudio, type RemoteAudioTrack } from "./engine/audio/conversation-audio";
@@ -132,7 +132,7 @@ export class YoobAvatar {
   private manifestValue?: CharacterManifest;
   private preparing?: Promise<void>;
   private monitor?: SessionMonitor;
-  private access?: { cdnBase: string; downloadToken: string };
+  private access?: { cdnBase: string; downloadToken: string; contentKey?: CryptoKey };
   private objectUrls: string[] = [];
   private utterance = 0;
   private speaking = false;
@@ -359,7 +359,7 @@ export class YoobAvatar {
     this.setPhase("warming");
     const source = store && manifest && this.access
       ? { kind: "cdn" as const, cdnBase: this.access.cdnBase, downloadToken: this.access.downloadToken, manifest,
-        pack: (manifest.runtime as { pack?: string } | undefined)?.pack ?? "pack.json" }
+        pack: (manifest.runtime as { pack?: string } | undefined)?.pack ?? "pack.json", contentKey: this.access.contentKey }
       : { kind: "url" as const, base: new URL(this.options.packUrl!, location.href).href };
     const progress = (loaded: number, bytes: number) => {
       const all = Math.max(total, bytes + workerStart), done = Math.min(all, workerStart + loaded);
@@ -389,12 +389,19 @@ export class YoobAvatar {
     this.stopHeartbeat();
     this.endCurrentSession();
     this.credentials = checkCredentials(await this.options.getCredentials());
-    const access = { cdnBase: this.cdnBase, downloadToken: this.credentials.download_token };
+    const access: { cdnBase: string; downloadToken: string; contentKey?: CryptoKey } = {
+      cdnBase: this.cdnBase, downloadToken: this.credentials.download_token,
+    };
     this.access = access;
     // Metering starts with the session, so heartbeats run during the download too.
     this.startHeartbeat();
     const manifest = await fetchManifest(access, this.options.character, this.options.version, "web");
     this.manifestValue = manifest;
+    // An encrypted pack's chunks open with the release's content key, which Yoob hands only to this live session. It
+    // stays in memory (a non-extractable CryptoKey); the chunk cache holds ciphertext.
+    if (manifest.encryption) {
+      access.contentKey = await releaseContentKey(this.apiBaseOf(this.credentials), this.credentials.session_token, manifest.encryption.keyId);
+    }
     this.root.setAttribute("aria-label", manifest.displayName);
     const runtime = manifest.runtime;
     if (isRealisticEngine(manifest.engine, runtime?.pack)) {
